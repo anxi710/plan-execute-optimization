@@ -1,0 +1,32 @@
+name: 研究任务
+description: 记录一次有明确问题、范围和验收条件的阅读、实验或实现
+title: "[Research] "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 要回答的问题
+      description: 链接 RESEARCH.md 中的候选或已有证据，说明本任务要补哪项缺口。不重复整份研究判断。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 动作、范围与产物
+      description: 准备做什么？依赖什么？产物存在哪里？阅读注明类型与深度，实验链接方案。按需在侧栏关联阶段 Milestone。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收与停止条件
+      description: 哪些可检查的证据表示交付完成？什么情况下停止或升级？否定结果也可完成任务，任务关闭不代表假设成立。
+    validations:
+      required: true
+  - type: textarea
+    id: resources
+    attributes:
+      label: 预算与前置条件
+      description: 涉及计算时填写模型、数据、GPU、调用、预计时长及授权范围；不涉及则可留空。条件性安排不代表运行授权。
+    validations:
+      required: false
