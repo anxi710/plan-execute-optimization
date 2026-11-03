@@ -25,7 +25,18 @@ function MermaidDiagram({ code }: { code: string }) {
         securityLevel: 'strict',
         theme: 'base',
         fontFamily: 'system-ui, "Noto Sans CJK SC", sans-serif',
-        themeVariables: { primaryColor: '#e8f5f1', primaryTextColor: '#193b36', primaryBorderColor: '#81b8a4', lineColor: '#668b80' },
+        themeVariables: {
+          darkMode: true,
+          background: '#181825',
+          primaryColor: '#313244',
+          primaryTextColor: '#cdd6f4',
+          primaryBorderColor: '#cba6f7',
+          secondaryColor: '#45475a',
+          tertiaryColor: '#1e1e2e',
+          lineColor: '#a6adc8',
+          textColor: '#cdd6f4',
+          edgeLabelBackground: '#181825',
+        },
       })
       const result = await mermaid.render(id, code)
       if (active) setSvg(result.svg)

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Badge, Button, Card, Drawer, Empty, Result, Space, Tag, Typography } from 'antd';
+import { Badge, Button, Card, Collapse, Drawer, Empty, Result, Space, Tag, Typography } from 'antd';
 import {
   ArrowRightOutlined, ArrowUpOutlined, BookOutlined, ClockCircleOutlined,
   CodeOutlined, CompassOutlined, ExperimentOutlined, FileTextOutlined,
@@ -12,7 +12,7 @@ import Markdown from '../components/Markdown';
 const { Title, Text } = Typography;
 const documentUrl = (id: string) => `/documents/${encodeURIComponent(id)}`;
 const detail = (id: string) => research.details.find((item) => item.id === id);
-const question = detail('p1');
+const question = detail('direction-menu');
 const reading = detail('l1');
 const categoryName = { project: '项目说明', paper: '论文笔记', experiment: '实验记录', research: '研究工作台' };
 
@@ -33,10 +33,10 @@ export function Overview() {
     <div className="overview-grid">
       <div className="overview-main">
         <Card className="focus-card" bordered={false}>
-          <div className="card-eyebrow"><span className="eyebrow-icon"><CompassOutlined /></span>当前关注的问题<span className="reference-label">P1</span></div>
-          <h2>{question ? question.title.replace(/^P1\s*题卡\s*[·：:]\s*/, '') : '当前研究问题'}</h2>
+          <div className="card-eyebrow"><span className="eyebrow-icon"><CompassOutlined /></span>当前研究入口</div>
+          <h2>{question?.title ?? '当前研究问题'}</h2>
           <div className="focus-judgment"><Markdown content={research.judgment} sourcePath={research.sourcePath} /></div>
-          <div className="focus-actions"><Link to="/questions"><Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end">打开问题卡</Button></Link>{evidence && <Button type="text" onClick={() => setEvidenceOpen(true)}>查看证据状态</Button>}</div>
+          <div className="focus-actions"><Link to="/questions"><Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end">打开方向菜单</Button></Link>{evidence && <Button type="text" onClick={() => setEvidenceOpen(true)}>查看证据状态</Button>}</div>
         </Card>
         <Card className="unknown-card" title={<Space><span className="section-icon amber"><SearchOutlined /></span><span>当前最大的未知</span></Space>} extra={<Tag bordered={false} color="gold">待核查</Tag>}>
           <Markdown content={research.unknown} sourcePath={research.sourcePath} />
@@ -55,9 +55,9 @@ export function Overview() {
       </div>
       <aside className="overview-aside" aria-label="下一步与阅读入口">
         <Card className="next-card" title={<Space><span className="section-icon"><ArrowRightOutlined /></span><span>下一步</span></Space>}>
-          <Tag className="task-label" bordered={false}>L1 · 文献核查</Tag>
+          <Tag className="task-label" bordered={false}>{research.stage}</Tag>
           <Markdown content={research.next} sourcePath={research.sourcePath} />
-          <Link to="/literature"><Button block icon={<ReadOutlined />}>查看阅读任务</Button></Link>
+          <Link to={documentUrl('RESEARCH') + '#下一步'}><Button block icon={<ReadOutlined />}>查看工作台下一步</Button></Link>
         </Card>
         <Card className="quick-links-card" title="研究资料">
           <Link className="resource-link" to="/literature"><span className="resource-icon"><BookOutlined /></span><span><strong>文献阅读</strong><small>原文、方法与证据</small></span><ArrowRightOutlined /></Link>
@@ -72,15 +72,16 @@ export function Overview() {
 }
 
 export function Questions() {
-  const candidates = research.details.filter((item) => /^p\d+$/i.test(item.id));
+  const sections = research.details.filter((item) => item.id.startsWith('directions-'));
   return <>
-    <PageHeader title="候选问题" description="保留可检验的假设，也保留能推翻它的条件。" extra={<Tag bordered={false}>{candidates.length} 个候选</Tag>} />
-    <div className="page-notice"><CompassOutlined /><span>候选题卡用于判断是否值得继续，尚未核查的线索不代表研究空白。</span></div>
-    {candidates.map((item) => <section className="candidate-section" key={item.id} id={item.id}>
-      <div className="section-heading"><span className="number-label">{item.id.toUpperCase()}</span><h3>{item.title.replace(/^P\d+\s*题卡\s*[·：:]\s*/, '')}</h3></div>
-      <Card className="reading-card"><Markdown content={item.markdown} sourcePath={research.sourcePath} /></Card>
-    </section>)}
-    {candidates.length === 0 && <Card><Empty description="还没有记录候选问题" /></Card>}
+    <PageHeader title="候选问题" description="由你筛选研究方向，按需展开假设、验证和停止条件。" />
+    <DetailCard id="direction-menu" />
+    {sections.length > 0 && <Collapse items={sections.map((item) => ({
+      key: item.id,
+      label: item.title,
+      children: <div id={item.id}><Markdown content={item.markdown} sourcePath={research.sourcePath} /></div>,
+    }))} />}
+    {!question && sections.length === 0 && <Card><Empty description="还没有记录候选问题" /></Card>}
   </>;
 }
 
@@ -92,8 +93,12 @@ export function Collection({ category }: { category: 'paper' | 'experiment' }) {
     <PageHeader title={isPaper ? '文献阅读' : '实验记录'} description={isPaper ? '从一个明确问题出发，让原文证据改变判断。' : '把方案、运行与分析放在一起，保留可复核的证据。'} extra={<Tag bordered={false}>{records.length} 份记录</Tag>} />
     <div className="collection-grid">
       <section>
-        {records.length ? <div className="document-grid">{records.map((item) => <Card key={item.id} className="document-card" title={<Space>{isPaper ? <BookOutlined /> : <ExperimentOutlined />}<span>{item.title}</span></Space>}><Text type="secondary">{item.path}</Text><Link to={documentUrl(item.id)}><Button type="link" icon={<ArrowRightOutlined />} iconPosition="end">打开记录</Button></Link></Card>)}</div> : <Card className="empty-state-card"><Empty image={<span className="empty-icon">{isPaper ? <BookOutlined /> : <ExperimentOutlined />}</span>} description={<><h3>{isPaper ? '还没有已完成核查的论文笔记' : '还没有已设计或执行的实验'}</h3><p>{isPaper ? '当前先核查代表方法的来源与反馈流程。完成后，笔记会出现在这里。' : '先核实问题与最近邻差异，再决定是否设计有界诊断。'}</p></>} /><Link to={isPaper ? '#reading-task' : '/questions'}><Button icon={isPaper ? <ReadOutlined /> : <CompassOutlined />}>{isPaper ? '查看当前阅读任务' : '查看候选问题'}</Button></Link></Card>}
-        {isPaper && reading && <section className="reading-task" id="reading-task"><div className="section-heading"><span className="number-label">L1</span><h3>当前阅读任务</h3></div><DetailCard id="l1" /></section>}
+        {records.length ? <div className="document-grid">{records.map((item) => <Card key={item.id} className="document-card" title={<Space>{isPaper ? <BookOutlined /> : <ExperimentOutlined />}<span>{item.title}</span></Space>}><Text type="secondary">{item.path}</Text><Link to={documentUrl(item.id)}><Button type="link" icon={<ArrowRightOutlined />} iconPosition="end">打开记录</Button></Link></Card>)}</div> : <Card className="empty-state-card"><Empty image={<span className="empty-icon">{isPaper ? <BookOutlined /> : <ExperimentOutlined />}</span>} description={<><h3>{isPaper ? '目录中还没有独立论文笔记' : '目录中还没有独立实验记录'}</h3><p>局部证据、验证草案与当前下一步统一保存在研究工作台。</p></>} /><Link to={documentUrl('RESEARCH')}><Button icon={<ReadOutlined />}>查看研究工作台</Button></Link></Card>}
+        {isPaper && <section className="reading-task" id="reading-task"><Collapse items={[detail('direction-sources'), reading].filter((item) => item !== undefined).map((item) => ({
+          key: item.id,
+          label: item.title,
+          children: <Markdown content={item.markdown} sourcePath={research.sourcePath} />,
+        }))} /></section>}
       </section>
       <aside className="collection-aside"><Card title={<Space><FileTextOutlined /><span>记录方式</span></Space>}><p>详细证据就近保存在对应目录，研究判断写回工作台。</p><p>任务通过 Issue 跟踪，记录通过 PR 与版本关联。</p>{index && <Link to={documentUrl(index.id)}><Button type="link" icon={<ArrowRightOutlined />} iconPosition="end">查看记录说明</Button></Link>}</Card></aside>
     </div>

@@ -1,26 +1,40 @@
-import { App as AntApp, ConfigProvider, Result, type ThemeConfig } from 'antd';
+import { App as AntApp, ConfigProvider, Result, theme as antTheme, type ThemeConfig } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 import WorkspaceLayout from './layouts/WorkspaceLayout';
 import { Collection, Decisions, DocumentPage, Overview, Questions } from './pages/ResearchPages';
 
 const theme: ThemeConfig = {
+  algorithm: antTheme.darkAlgorithm,
   token: {
-    colorPrimary: '#16776b',
-    colorInfo: '#16776b',
-    colorText: '#203536',
-    colorTextSecondary: '#64776f',
-    colorBgLayout: '#f5f7f8',
-    colorBorderSecondary: '#e8edee',
+    colorPrimary: '#cba6f7',
+    colorPrimaryHover: '#b4befe',
+    colorPrimaryActive: '#b4befe',
+    colorInfo: '#89b4fa',
+    colorSuccess: '#a6e3a1',
+    colorWarning: '#f9e2af',
+    colorError: '#f38ba8',
+    colorText: '#cdd6f4',
+    colorTextSecondary: '#bac2de',
+    colorTextTertiary: '#a6adc8',
+    colorTextLightSolid: '#1e1e2e',
+    colorLink: '#89b4fa',
+    colorLinkHover: '#b4befe',
+    colorBgBase: '#1e1e2e',
+    colorBgLayout: '#1e1e2e',
+    colorBgContainer: '#181825',
+    colorBgElevated: '#1e1e2e',
+    colorBorder: '#45475a',
+    colorBorderSecondary: '#313244',
     borderRadius: 10,
     fontSize: 14,
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
   },
   components: {
-    Layout: { headerBg: '#fff', siderBg: '#fff' },
-    Menu: { itemSelectedBg: '#eaf4f0', itemSelectedColor: '#136b61', itemHoverBg: '#f4f7f6', itemHeight: 43 },
+    Layout: { headerBg: '#181825', siderBg: '#181825' },
+    Menu: { itemSelectedBg: '#313244', itemSelectedColor: '#cba6f7', itemHoverBg: '#313244', itemHeight: 43 },
     Card: { headerFontSize: 15, headerHeight: 62 },
-    Button: { controlHeight: 38, primaryShadow: 'none' },
+    Button: { controlHeight: 38, primaryColor: '#1e1e2e', primaryShadow: 'none' },
   },
 };
 
