@@ -1,8 +1,8 @@
 # Planner–Executor Optimization
 
-个人研究仓库。以 ICML 为目标，研究冻结 Executor 时如何有效优化 Planner。投稿年份待定。
+个人研究仓库，计划投稿 ICML 2027。研究冻结 Executor 时如何有效优化 Planner。
 
-[打开研究网站](http://localhost:5173/) · [研究工作台](RESEARCH.md) · [论文](papers/README.md) · [实验](experiments/README.md)
+[打开研究网站](http://localhost:5173/) · [研究工作台](RESEARCH.md) · [题卡审核结果](RESEARCH.md#direction-menu) · [论文](papers/README.md) · [实验](experiments/README.md)
 
 ## 研究设置
 
@@ -13,11 +13,11 @@ flowchart LR
   T -->|执行反馈| P
 ```
 
-不预设长时程特异性。先定位真实瓶颈，再核查近邻和简单基线。
+不预设长时程特异性。按[研究判断原则](AGENTS.md#研究判断)定位真实困难、核查近邻与简单基线，再选择优化方法。
 
 ## 怎么用
 
-看概览中的判断、未知与下一步，按需要展开题卡。详细证据就近保存在论文或实验目录。
+看概览中的判断、未知与下一步，再从[审核结果与题卡](RESEARCH.md#direction-menu)了解各问题的当前定位，继续筛选并按需展开证据。方向数量由你决定。详细证据就近保存在论文或实验目录。
 
 `RESEARCH.md` 是研究内容源。网站直接读取仓库中的 Markdown，开发时内容变化会自动更新。
 
@@ -42,6 +42,8 @@ npm --prefix web run dev
 
 `RESEARCH.md` 同时用于你的阅读与智能体接续，保持一份内容源。简洁不等于省略必要解释，也不能改变证据条件和“可能／建议／必须”的强度。
 
+每次修改都核对所有文档并同步受影响的内容、状态与入口，维护规则见 [AGENTS.md](AGENTS.md#记录与-github)。
+
 </details>
 
 <details>
@@ -60,7 +62,7 @@ auto-research 是本项目持续使用的科研工作流。可以在阅读、讨
 <details>
 <summary>网站架构、构建与检查</summary>
 
-网站使用 [React](https://react.dev/)、TypeScript、[Vite](https://vite.dev/guide/) 和 [Ant Design](https://ant.design/components/overview/)。导航与页面通过 React Router 组织，正文使用 react-markdown、GFM 与 Mermaid 渲染。
+网站使用 [React](https://react.dev/)、TypeScript、[Vite](https://vite.dev/guide/) 和 [Ant Design](https://ant.design/components/overview/)。界面采用 [Catppuccin Mocha](https://catppuccin.com/palette/) 深色配色。导航与页面通过 React Router 组织，正文使用 react-markdown、GFM 与 Mermaid 渲染。
 
 | 位置 | 职责 |
 |---|---|
@@ -103,7 +105,7 @@ npm --prefix web run preview
 <details>
 <summary>版本规则与当前配置</summary>
 
-Codex 创建的分支默认使用 `codex/` 前缀。提交信息用 `<type>(<scope>): <description>`。PR 用 `Refs #编号` 关联任务，全部验收完成后才用 `Closes #编号`。
+Codex 创建的分支默认使用 `codex/` 前缀。提交信息用 `<type>(<scope>): <description>`。PR 用 `Refs #编号` 关联任务，全部验收完成后才用 `Closes #编号`。交付与审核的版本追踪使用 Git，具体约定见 [助手规范](AGENTS.md#记录与-github)。
 
 模板：[研究任务](.github/ISSUE_TEMPLATE/research-task.yml)、[PR](.github/pull_request_template.md)。当前尚未配置 Git remote；现有任务卡暂存在研究工作台，建立 Issue 后迁移任务范围与验收。
 
