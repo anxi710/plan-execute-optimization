@@ -1,0 +1,45 @@
+planner_generation:
+  temperature: null
+  token_parameter: max_tokens
+  thinking: null
+  timeout: 60
+  max_retries: 2
+  max_concurrency: 10
+  batch_size: 10
+
+executor:
+  model_name: null
+  api_base: null
+  temperature: 0
+  max_completion_tokens: 512
+  token_parameter: max_completion_tokens
+  request_timeout: 60
+  request_max_retries: 2
+  deepseek_thinking: null
+  send_stop: true
+  seed: null
+
+environments:
+  default_max_steps: 10
+  alfworld:
+    instruction_path: toolkit/prompt/executor/instructions/alfworld_inst.txt
+    max_steps: 30
+  sciworld:
+    instruction_path: toolkit/prompt/executor/instructions/sciworld_inst.txt
+    max_steps: null
+    max_error_steps: 10
+    simplification: easy
+    jar_path: null
+    server_step_limit: 200
+    split: test
+  webshop:
+    instruction_path: toolkit/prompt/executor/instructions/webshop_inst.txt
+    max_steps: 15
+    split: test
+    catalog_path: null
+    catalog_seed: 233
+    num_products: 1000
+    human_goals: false
+  terminalbench:
+    reviewed_task_versions:
+      terminal-bench/music-harmony: "2.2.1"

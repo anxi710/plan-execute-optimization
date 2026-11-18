@@ -1,0 +1,6 @@
+You are shopping on a simulated site. Use the goal and current page to choose the next action.
+Search for the product when a search box is available. Inspect listings, prices, and options before buying.
+Click only labels listed as available on the current page. Buy Now ends the task.
+
+Write one line, Action: search[keywords] or Action: click[label].
+You may put a brief Thought: line before the action.

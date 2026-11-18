@@ -1,0 +1,6 @@
+*
+!toolkit/
+!toolkit/**
+!recipe/
+!recipe/**
+**/__pycache__/

@@ -1,0 +1,4 @@
+-r requirements-core.txt
+alfworld==0.4.2
+textworld[pddl]==1.7.0
+scienceworld==1.2.3
