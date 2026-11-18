@@ -9,31 +9,42 @@ from collections import Counter
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2] / "src" / "planner-eval"
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from plan_eval.plans import read_jsonl, write_json, write_jsonl
+from toolkit.utils.files import read_jsonl, read_yaml_mapping, write_json, write_jsonl
+from toolkit.utils.runfiles import save_settings
 
 
-def blind(run, tasks):
+def blind(run, tasks, *, samples_per_condition, blind_seed):
     index = []
-    directory = run / "blinded"
-    directory.mkdir(exist_ok=True)
+    documents = {}
+    expected = {(condition, slot) for condition in ("A", "B") for slot in range(samples_per_condition)}
     for task_id, task in sorted(tasks.items()):
         candidates = sorted(read_jsonl(run / "plans" / f"{task_id}.jsonl"),
                             key=lambda row: (row["condition"], row["sample"]))
-        if len(candidates) != 16:
-            raise ValueError(f"Task {task_id} does not have all 16 candidates")
-        random.Random(f"417/{task_id}").shuffle(candidates)
+        if len(candidates) != len(expected) or {(row["condition"], row["sample"]) for row in candidates} != expected:
+            raise ValueError(f"Task {task_id} does not have all {len(expected)} candidates")
+        random.Random(f"{blind_seed}/{task_id}").shuffle(candidates)
         rows = []
         for number, row in enumerate(candidates, 1):
             blind_id = f"T{task_id}-{number:02}"
             rows.append({"blind_id": blind_id, "plan": row["plan"]})
             index.append({**row, "blind_id": blind_id})
-        write_json(directory / f"{task_id}.json", {"task": task["task"], "plans": rows})
-    write_jsonl(run / "blind_index.jsonl", index)
+        documents[task_id] = {"task": task["task"], "plans": rows}
+    index_path = run / "blind_index.jsonl"
+    if index_path.exists() and read_jsonl(index_path) != index:
+        raise ValueError("Blind index differs from this run. Use a new run directory.")
+    save_settings(run / "blind_settings.json", {
+        "blind_seed": blind_seed, "samples_per_condition": samples_per_condition,
+    })
+    directory = run / "blinded"
+    directory.mkdir(exist_ok=True)
+    for task_id, document in documents.items():
+        write_json(directory / f"{task_id}.json", document)
+    write_jsonl(index_path, index)
 
 
-def analyze(run, tasks):
+def analyze(run, tasks, *, coverage_prefixes):
     labels = {}
     for path in sorted((run / "labels").glob("*.json")):
         for row in json.loads(path.read_text()):
@@ -77,7 +88,8 @@ def analyze(run, tasks):
         new_routes = set(common_routes["B"]) - set(common_routes["A"])
         rows.append({
             "task_id": task_id, "group": task["group"],
-            "by_k": {key: {str(k): len(routes(group[:k])) for k in (2, 4, 8)}
+            "by_k": {key: {str(prefix): len(routes(group[:prefix]))
+                           for prefix in coverage_prefixes if prefix <= len(group)}
                      for key, group in groups.items()},
             "all_routes": {key: routes(group) for key, group in groups.items()},
             "common_tokens": common_budget,
@@ -104,7 +116,7 @@ def analyze(run, tasks):
     return queue
 
 
-def report(run):
+def report(run, *, samples_per_plan):
     files = sorted((run / "executions").glob("*/sample_*.json"))
     queue = read_jsonl(run / "execution_queue.jsonl")
     results = []
@@ -126,18 +138,35 @@ def report(run):
             "usage": dict(sum((Counter(row["executor_usage"]) for row in trajectories), Counter())),
         })
     write_json(run / "execution_summary.json", results)
-    print(f"{sum(row['complete'] for row in results)}/{3 * len(queue)} rollouts complete")
+    print(f"{sum(row['complete'] for row in results)}/{samples_per_plan * len(queue)} rollouts complete")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=("blind", "queue", "report"))
+    parser.add_argument("--config", type=Path, default=Path(__file__).with_name("config.yaml"))
+    parser.add_argument("--run-dir", type=Path)
+    args = parser.parse_args(argv)
+    recipe = read_yaml_mapping(args.config)
+    run_dir = args.run_dir or recipe["run_dir"]
+    if not run_dir:
+        parser.error("Set run_dir in the recipe config or pass --run-dir")
+    run_dir = Path(run_dir)
+    if args.stage == "report":
+        execution = json.loads((run_dir / "executions/run_settings.meta").read_text(encoding="utf-8"))
+        report(run_dir, samples_per_plan=execution["samples_per_plan"])
+        return
+    tasks = {int(row["id"]): row for row in read_jsonl(run_dir / "tasks.jsonl")}
+    if args.stage == "blind":
+        planner = json.loads((run_dir / "planner_settings.json").read_text(encoding="utf-8"))
+        blind(run_dir, tasks, samples_per_condition=planner["samples_per_condition"],
+              blind_seed=recipe["analysis"]["blind_seed"])
+    else:
+        prefixes = recipe["analysis"]["coverage_prefixes"]
+        if not isinstance(prefixes, list) or any(type(prefix) is not int or prefix < 1 for prefix in prefixes):
+            parser.error("coverage_prefixes must be a list of positive integers")
+        print(f"{len(analyze(run_dir, tasks, coverage_prefixes=prefixes))} plans queued")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("blind", "queue", "report"))
-    parser.add_argument("--run-dir", type=Path, required=True)
-    args = parser.parse_args()
-    tasks = {int(row["id"]): row for row in read_jsonl(args.run_dir / "tasks.jsonl")}
-    if args.stage == "blind":
-        blind(args.run_dir, tasks)
-    elif args.stage == "queue":
-        print(f"{len(analyze(args.run_dir, tasks))} plans queued")
-    else:
-        report(args.run_dir)
+    main()

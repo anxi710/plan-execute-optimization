@@ -1,0 +1,41 @@
+run_dir: null
+data_dir: null
+split: dev
+task_id: null
+
+planner:
+  model: deepseek-flash
+  api_base: https://api.deepseek.com
+  temperature: 0.8
+  thinking: disabled
+  token_parameter: max_tokens
+  max_output_tokens: 320
+  samples_per_condition: 8
+  concurrency: 8
+  request_timeout_seconds: 60
+  automatic_retries: 0
+  order_seed: 42
+  history_words: 30
+
+rollout:
+  samples_per_plan: 3
+  plan_placement: query
+  concurrency: 12
+  limit: null
+  retry_incomplete: false
+
+analysis:
+  blind_seed: 417
+  coverage_prefixes: [2, 4, 8]
+
+toolkit:
+  executor:
+    model_name: deepseek-flash
+    api_base: https://api.deepseek.com
+    temperature: 0.6
+    max_completion_tokens: 256
+    token_parameter: max_tokens
+    request_max_retries: 0
+    deepseek_thinking: disabled
+  environments:
+    alfworld: {}

@@ -74,7 +74,8 @@
 | `DISCUSSION.md` | 按主题持续整理研究讨论，保留工作定义、假设、分歧、候选对照与待验证问题 |
 | `PROPOSAL.md` | 当前关注的研究提案；具体内容是否获准以研究工作台的审核记录为准 |
 | `archive/` | 历史研究方案与证据，保留当时状态，不作为当前计划 |
-| `papers/`、`experiments/<topic>/` | 详细证据；索引只列实际记录 |
+| `papers/`、`experiments/<topic>/` | 文献证据与实验结果；实验目录记录实际设置、结果和原始产物位置 |
+| `src/toolkit/`、`src/recipe/<name>/` | 可复用的实验工具与可运行的实验方案，依赖和复用要求见[工具集说明](src/toolkit/README.md#基础库与-recipe) |
 | Issue / Milestone | 任务范围、依赖、预算与验收 / 研究阶段 |
 | `web/` | React / Vite / TypeScript / Ant Design 网站，直接读取 Markdown，不手动维护第二份研究状态 |
 

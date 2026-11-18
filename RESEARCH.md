@@ -52,7 +52,7 @@
 
 两份专题调研记录了论文与官方代码的核查范围及限制。已有文献与历史证据分别见[论文索引](papers/README.md)和[原来源索引](archive/pre-v04/RESEARCH.md#direction-sources)。
 
-[同任务的高层战略采样](experiments/strategy-sampling/README.md)复用 `src/planner-eval/`，保留协议、标注和原始执行轨迹。实验入口见[实验目录](experiments/README.md)。
+[同任务的高层战略采样](experiments/strategy-sampling/README.md)保留结果、标注和原始执行轨迹。可运行的代码与协议见[战略采样 Recipe](src/recipe/strategy-sampling/README.md)。
 
 </details>
 

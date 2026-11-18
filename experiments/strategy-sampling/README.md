@@ -29,29 +29,17 @@
 
 API 共收到 192 条 Planner 回复与 1,473 条 Executor 回复，返回用量合计 2,940,065 token。按运行时的 DeepSeek Flash 非高峰公开价估算为 0.109 美元，实际账单以账户为准。[DeepSeek 计价](https://api-docs.deepseek.com/quick_start/pricing/)
 
-## 协议
-
-从 ALFWorld `dev` 的六种任务类型按目标分层抽取八个任务，随机种子 417。任务 ID 为 3、6、12、14、68、72、103、104。另选 2、17、18、77 检查四组预先写好的替代路线。全部 12 项都以完整初始观察核对了唯一的 `gamefile` 映射。两组条件收到同一初态和任务。B 只额外看到自身已生成路线的简介，每份截取前 30 个词。B 的第一份计划使用和 A 相同的提示，两次调用独立。
-
-| 条件 | 生成方式 |
-| --- | --- |
-| A | 每任务独立请求 8 份高层计划。 |
-| B | 每任务最多 8 份，后续调用请求考虑实质不同的可行路线。 |
-
-两组均用 `deepseek-flash` 非思考模式，温度 0.8，最多 320 个输出 token，不启用自动重试。生成后打乱文本，按会改变信息获取、路线或子目标先后的关键决策归组。标注材料隐藏条件、生成顺序和执行结果。每任务报告从前 2、4、8 份中观察到的路线数。成本匹配使用每任务两组总 token 数的较小值，分别取其预算内的最长生成前缀，包含输入历史和输出。单独保留无明确路线的标记。
-
-从 A 的常见路线和 B 在共同预算内新增的路线各取首个代表。若无 B 新路线，优先比较其他已出现的路线。当前缀内两组只有同类路线时，取 B 首个有效计划比较执行表现。每任务至多执行两份生成计划，另执行预先写好的八份参照计划。每份在同一 `gamefile` 独立重置三次。Executor 固定为 `deepseek-flash` 非思考模式，温度 0.6，最多 30 步，每步最多 256 个输出 token。使用现有 ALFWorld 提示、一个示例和相同计划注入位置。服务端 seed 未指定。总规模上限为 192 份生成计划和 96 条完整轨迹。
-
 生成计划的代表执行用于诊断个案。它适合观察执行是否体现规划中的决策，也保留意外汇合与失败。按条件的终局成功数只描述实际执行的代表，抽取方式随候选路线而变。
 
 ## 运行与产物
 
-本地运行目录为 [v04-strategy-sampling-run01](../../src/planner-eval/outputs/v04-strategy-sampling-run01)。数据读取自本机现有 ALFWorld `valid_seen` 数据，原始路径记录在该目录的 `mapping.yaml` 和 `executions/run_settings.meta`。运行环境为 Conda `plan-test`，Python 3.11.16，ALFWorld 0.3.5，TextWorld 1.7.0。复用 `planner-eval` 的 `8019c64e664ba517171a5149674f429d370404ef`。本次运行时，本目录的编排脚本尚未提交。
+本地运行目录为 [v04-strategy-sampling-run01](runs/v04-strategy-sampling-run01/)。数据读取自本机现有 ALFWorld `valid_seen` 数据，原始路径记录在 `mapping.yaml` 和运行配置，执行并发为 16。运行环境为 Conda `plan-test`，Python 3.11.16，ALFWorld 0.3.5，TextWorld 1.7.0。首轮复用 `planner-eval` 的 `8019c64e664ba517171a5149674f429d370404ef`，当时的编排脚本为未提交的工作区修改。[实验协议与当前 Recipe](../../src/recipe/strategy-sampling/README.md)
 
 | 位置 | 内容 |
 | --- | --- |
-| [sample.py](sample.py) · `plans/*.jsonl` | 提示、原始 API 回复、提取的计划与路线说明、每请求 token 和响应模型 ID。 |
-| [analyze.py](analyze.py) · `blinded/`、`labels/`、`coverage.json` | 盲标材料、标签理由及候选覆盖率的计算。 |
-| [execute.py](execute.py) · `execution_queue.jsonl`、`executions/`、`execution_summary.json` | 实际执行的计划、最终设置、每次动作和环境反馈、终局状态及 API 用量。 |
+| `tasks.jsonl`、`controls.jsonl`、`gamefiles.jsonl` | 实际任务、手写参照计划与游戏文件映射。 |
+| `planner_settings.json`、`plans/*.jsonl` | 采样设置、提示、原始 API 回复、提取的计划与路线说明、每请求 token 和响应模型 ID。 |
+| `blinded/`、`labels/`、`coverage.json` | 盲标材料、标签理由及候选覆盖率的计算。 |
+| `execution_queue.jsonl`、`executions/`、`execution_summary.json` | 实际执行的计划、最终设置、每次动作和环境反馈、终局状态及 API 用量。 |
 
-以运行目录的 `tasks.jsonl`、`controls.jsonl`、`gamefiles.jsonl` 为输入。采样脚本使用环境中的 `DEEPSEEK_API_KEY`。执行脚本使用 `EXECUTOR_API_KEY`，本次从同一环境变量传入。脚本从项目根目录启动，传入 `--run-dir`。执行另传 `--data-dir` 和 `--concurrency 16`。分析脚本依次使用 `blind`、`queue` 和 `report`，路线标签在解盲前置于 `labels/`。
+`runs/` 保存本地原始产物。`executions/run_settings.original.meta` 保留首轮设置的原文，`run_settings.meta` 记录迁移后的提示资源路径。首轮 Executor 使用一条示例。当前 Recipe 不再加载示例，不能续跑首轮轨迹；原始轨迹仍可读取。

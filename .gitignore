@@ -5,3 +5,4 @@ web/test-results/
 *.tsbuildinfo
 __pycache__/
 .impeccable/
+/experiments/strategy-sampling/runs/
