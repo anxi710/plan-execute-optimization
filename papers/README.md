@@ -1,8 +1,15 @@
 # 论文与阅读笔记
 
-已为[方向菜单](../RESEARCH.md#direction-menu)做过局部机制核查，含 [D05 训练期回退候选的追加核查](../RESEARCH.md#directions-credit)。[来源、阅读深度与缺口](../RESEARCH.md#direction-sources)保存在研究工作台。目前尚无本目录中的独立论文笔记，不把局部核查记作完整阅读。
+当前调研服务于[高层规划器优化提案](../PROPOSAL.md)，记录相关工作的机制与证据范围。
 
-原始 D01–D12 题卡的本轮审核已完成，定位统一见[审核结果](../RESEARCH.md#direction-menu)。后续阅读随进一步筛选和明确的证据缺口确定，见[当前下一步](../RESEARCH.md#下一步)。本页不另建待办队列。
+此前 D03、D05 等问题的[来源、阅读深度与缺口](../archive/pre-v04/RESEARCH.md#direction-sources)已随旧研究方案归档。后续阅读按研究问题的具体缺口开展，见[当前下一步](../RESEARCH.md#下一步)。
+
+## 专题调研
+
+- [Full-plan 优化：生成过程、证据与文献筛选](fullplan-optimization-review.md)：区分一次规划内部调用与任务级重规划，审查战略探索、执行评价和参数学习的近邻。
+- [Planner-Centered：机制近邻与证据边界](planner-centered-review.md)：核查在线整体规划维护的架构先例、状态语义与适用限制；保留为独立设想。
+
+两份调研服务于 [research proposal v0.4](../PROPOSAL.md)，不代表已经采用其中机制或获得本项目实验结果。
 
 ## 保存方式
 

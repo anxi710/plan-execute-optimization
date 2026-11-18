@@ -6,7 +6,7 @@ body:
     id: question
     attributes:
       label: 要回答的问题
-      description: 链接 RESEARCH.md 中的候选或已有证据，说明本任务要补哪项缺口。不重复整份研究判断。
+      description: 链接 RESEARCH.md 的当前问题、PROPOSAL.md 的对应部分或已有证据，说明要补哪项缺口及依赖的审核状态。不重复整份研究判断。
     validations:
       required: true
   - type: textarea

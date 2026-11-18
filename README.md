@@ -1,25 +1,35 @@
 # Planner–Executor Optimization
 
-个人研究仓库，计划投稿 ICML 2027。研究冻结 Executor 时如何有效优化 Planner。
+个人研究仓库，计划投稿 ICML 2027。当前关注高层 Planner 的战略探索、执行证据支持的低成本评价与策略更新。
 
-[打开研究网站](http://localhost:5173/) · [研究工作台](RESEARCH.md) · [题卡审核结果](RESEARCH.md#direction-menu) · [论文](papers/README.md) · [实验](experiments/README.md)
+[打开研究网站](http://localhost:5173/) · [当前提案](PROPOSAL.md) · [研究工作台](RESEARCH.md) · [研究讨论](DISCUSSION.md) · [历史方案](archive/pre-v04/RESEARCH.md) · [论文](papers/README.md) · [实验](experiments/README.md)
+
+提案的[审核记录](RESEARCH.md#decisions)和[下一步](RESEARCH.md#下一步)见研究工作台。
 
 ## 研究设置
 
 ```mermaid
 flowchart LR
-  P["Planner · 优化参数"] -->|计划| E["Executor · 冻结"]
+  P["相对小型 Planner · 优化参数"] -->|计划| E["Executor · 冻结"]
   E --> T["环境交互"]
-  T -->|执行反馈| P
+  T -->|训练反馈| P
 ```
 
-不预设长时程特异性。按[研究判断原则](AGENTS.md#研究判断)定位真实困难、核查近邻与简单基线，再选择优化方法。
+主线保留独立 Planner 形成高层 full-plan、固定 Executor 负责执行的接口。规划形成可以包含多次调用，具体机制与表示尚未选定。Planner 优先使用相对小的模型，兼顾能力与成本；主实验只更新 Planner。跨 Executor 复用保留为后续分析，Planner-Centered 为独立设想。具体问题与论证见[当前提案](PROPOSAL.md)。
+
+不预设长时程特异性。按[研究判断原则](AGENTS.md#研究判断)定位真实困难、核查近邻与简单基线，再选择优化方法。研究问题不受现有训练基座或奖励实现限制；研究者可以按问题需要搭建新框架，已有实现仅作背景与复用参考。
+
+研究按“工作假设—构建—评价—修正”循环推进，系统与实验也用于完善问题理解。讨论足以指导本轮实现后，可逆设计允许暂定；需要完整训练闭环才能观察的现象，应由相应系统与实验回答。小规模测试用于回答其能覆盖的问题，不代替学习收益与适用范围的评估，当前安排见[研究工作台](RESEARCH.md#research-process)。
+
+本次投稿的核心贡献应落在 Planner 的训练方法、训练信号或学习效率。选题同时考虑截止前完成证据的可行性，导师要求、投稿日期核查与资源条件统一见[投稿筛选约束](RESEARCH.md#submission-constraints)。
 
 ## 怎么用
 
-看概览中的判断、未知与下一步，再从[审核结果与题卡](RESEARCH.md#direction-menu)了解各问题的当前定位，继续筛选并按需展开证据。方向数量由你决定。详细证据就近保存在论文或实验目录。
+研究网站的维护范围仅包括 PC 端浏览器。
 
-`RESEARCH.md` 是研究内容源。网站直接读取仓库中的 Markdown，开发时内容变化会自动更新。
+网站采用“看现状 → 阅读提案 → 查阅历史”的阅读入口：总览展示判断、未知、下一步与提案审核状态；当前提案和配套调研独立阅读；旧题卡、编号对照与证据作为历史材料保留。
+
+`RESEARCH.md` 保存当前状态，`PROPOSAL.md` 保存提案正文，`archive/` 保存历史方案。网站直接读取这些 Markdown，开发时内容变化会自动更新。详细证据就近保存在论文或实验目录，不在网站维护第二份研究状态。
 
 首次安装依赖，再启动网站：
 
@@ -47,11 +57,13 @@ npm --prefix web run dev
 </details>
 
 <details>
-<summary>auto-research 如何参与研究</summary>
+<summary>默认科研技能如何参与研究</summary>
 
-auto-research 是本项目持续使用的科研工作流。可以在阅读、讨论选题、设计、执行、分析、写作或评审时，选择当前需要的一部分，也可以组合已授权的步骤。已有材料决定入口，无需从头走完所有阶段。
+本项目默认结合 auto-research、Scientific Agent Skills（K-Dense）和 Academic Research Skills（ARS）辅助科研。auto-research 组织研究接续与记录，Scientific Agent Skills 支持科学推理、实验与分析，Academic Research Skills 支持问题界定、文献、写作与评审。具体使用约定见 [默认科研技能](AGENTS.md#默认科研技能)。
 
-来源与当前版本记录在 [RESEARCH.md](RESEARCH.md#decisions)。研究判断、论文、实验和 GitHub 任务仍保存在原位置，网站展示同一份 Markdown 内容。
+可以在阅读、讨论选题、设计、执行、分析、写作或评审时，选择当前需要的模块，也可以组合已授权的步骤。已有材料决定入口，无需从头走完所有阶段。
+
+auto-research 的来源、当前版本与默认技能采用决定记录在 [RESEARCH.md](RESEARCH.md#decisions)。研究判断、论文、实验和 GitHub 任务仍保存在原位置，网站展示同一份 Markdown 内容。
 
 在真实任务中发现流程问题时，记录问题及影响，尝试最小改动。行为改进用同一任务、工具和预算比较基线与候选，保留原有正确行为，再决定是否采用。项目内约定与共享工作流分别维护，改进遵循包内的演化流程与实际授权范围。
 
@@ -66,11 +78,13 @@ auto-research 是本项目持续使用的科研工作流。可以在阅读、讨
 
 | 位置 | 职责 |
 |---|---|
-| `web/src/content/` | 从仓库 Markdown 提取摘要、组织文档和搜索 |
+| `web/src/content/` | 从仓库 Markdown 读取当前状态、提案与历史题卡，组织文档、图片、实验可视化和搜索 |
 | `web/src/App.tsx` | 主题入口与页面路由 |
 | `web/src/layouts/`、`web/src/pages/` | 应用布局与研究页面 |
 | `web/src/components/Markdown.tsx` | 文档阅读、表格、折叠内容、图和站内链接 |
 | `web/src/styles.css` | 阅读排版与响应式布局 |
+
+历史 Dxx 题卡保留原有编号与定位点，不自动列入当前候选。当前内容更新其权威 Markdown，网站不单独保存研究状态。
 
 使用 Node.js 22.12 或更新版本。检查与构建：
 
@@ -79,7 +93,7 @@ npm --prefix web test
 npm --prefix web run build
 ```
 
-浏览器检查使用 `npm --prefix web run test:e2e`。需要本机 Chrome 或 Playwright Chromium，可通过 `CHROMIUM_PATH` 指定浏览器。
+PC 端浏览器检查使用 `npm --prefix web run test:e2e`。需要本机 Chrome 或 Playwright Chromium，可通过 `CHROMIUM_PATH` 指定浏览器。
 
 产物在 `web/dist/`。本地预览构建结果：
 
@@ -95,7 +109,10 @@ npm --prefix web run preview
 
 | 入口 | 保存什么 |
 |---|---|
-| `RESEARCH.md` | 研究判断、缺口与下一项关键证据 |
+| `RESEARCH.md` | 当前判断、提案审核状态、缺口与下一步 |
+| `DISCUSSION.md` | 按主题持续更新的讨论、假设与候选对照 |
+| `PROPOSAL.md` | 当前关注的提案正文 |
+| `archive/` | 历史方案、题卡、证据与决定 |
 | Milestone / Issue | 阶段与任务范围、依赖、预算和验收 |
 | 分支 / commit / PR | 有范围的变更与个人检查记录 |
 | tag / Release | 按需固定复现或投稿版本 |
@@ -125,7 +142,7 @@ Codex 创建的分支默认使用 `codex/` 前缀。提交信息用 `<type>(<sco
 | 内容 | 起始基础 |
 |---|---|
 | 架构 | Planner 一次生成 full-plan，固定 Executor 执行 |
-| 训练 | 已探索 SFT→GRPO，奖励含 `r_exec` 与 `r_fmt` |
+| 训练 | 已探索 SFT→GRPO，奖励含 `r_exec` 与 `r_fmt`；研究者确认 `r_exec` 只按任务完成结果计算，不包含 ECGR 或有／无计划比较，原讨论见[历史 D03](archive/pre-v04/RESEARCH.md#d03) |
 | 技术栈 | VeRL、verl-agent、vLLM |
 | 环境 | ALFWorld、SciWorld、WebShop |
 | 资源偏好 | 优先 1.5B～13B；实际硬件与预算在实验前核对 |

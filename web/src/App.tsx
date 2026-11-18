@@ -2,7 +2,7 @@ import { App as AntApp, ConfigProvider, Result, theme as antTheme, type ThemeCon
 import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 import WorkspaceLayout from './layouts/WorkspaceLayout';
-import { Collection, Decisions, DocumentPage, Overview, Questions } from './pages/ResearchPages';
+import { Collection, Decisions, DocumentPage, Overview, QuestionPage, Questions } from './pages/ResearchPages';
 
 const theme: ThemeConfig = {
   algorithm: antTheme.darkAlgorithm,
@@ -27,7 +27,7 @@ const theme: ThemeConfig = {
     colorBorder: '#45475a',
     colorBorderSecondary: '#313244',
     borderRadius: 10,
-    fontSize: 14,
+    fontSize: 16,
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
   },
   components: {
@@ -46,6 +46,7 @@ export default function App() {
           <Route element={<WorkspaceLayout />}>
             <Route index element={<Overview />} />
             <Route path="questions" element={<Questions />} />
+            <Route path="questions/:id" element={<QuestionPage />} />
             <Route path="literature" element={<Collection category="paper" />} />
             <Route path="experiments" element={<Collection category="experiment" />} />
             <Route path="decisions" element={<Decisions />} />

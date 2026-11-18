@@ -13,7 +13,8 @@ const { Header, Sider, Content } = Layout;
 
 const sections = [
   { path: '/', label: '研究总览', icon: <HomeOutlined /> },
-  { path: '/questions', label: '候选问题', icon: <CompassOutlined /> },
+  { path: '/documents/PROPOSAL', label: '当前提案', icon: <ReadOutlined /> },
+  { path: '/questions', label: '历史问题', icon: <CompassOutlined /> },
   { path: '/literature', label: '文献阅读', icon: <BookOutlined /> },
   { path: '/experiments', label: '实验记录', icon: <ExperimentOutlined /> },
   { path: '/decisions', label: '关键决定', icon: <HistoryOutlined /> },
@@ -25,7 +26,7 @@ export default function WorkspaceLayout() {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const current = sections.find((item) => item.path === location.pathname);
+  const current = sections.find((item) => item.path === location.pathname || (item.path !== '/' && location.pathname.startsWith(item.path + '/')));
   const selected = current?.path || (location.pathname.startsWith('/documents/') ? '/project' : '/');
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -36,8 +37,8 @@ export default function WorkspaceLayout() {
   }, []);
   useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   const items: MenuProps['items'] = [
-    { type: 'group', label: '研究工作台', children: sections.slice(0, 4).map((item) => ({ key: item.path, icon: item.icon, label: item.label })) },
-    { type: 'group', label: '项目记录', children: sections.slice(4).map((item) => ({ key: item.path, icon: item.icon, label: item.label })) },
+    { type: 'group', label: '研究工作台', children: sections.slice(0, 5).map((item) => ({ key: item.path, icon: item.icon, label: item.label })) },
+    { type: 'group', label: '项目记录', children: sections.slice(5).map((item) => ({ key: item.path, icon: item.icon, label: item.label })) },
   ];
   const navigation = <><Link to="/" className="workspace-brand" onClick={() => setMobileOpen(false)}><span className="brand-mark"><NodeIndexOutlined /></span><span><strong>Planner Lab</strong><small>个人研究工作台</small></span></Link><div className="project-switcher"><span className="project-symbol">PE</span><span><strong>Planner–Executor</strong><small>Optimization</small></span><Tag bordered={false}>ICML 2027</Tag></div><Menu mode="inline" selectedKeys={[selected]} items={items} onClick={({ key }) => { navigate(key); setMobileOpen(false); }} /><div className="sidebar-bottom"><span className="workspace-avatar"><Avatar size={30} icon={<ReadOutlined />} /></span><div><strong>个人研究空间</strong><small>判断与证据，持续积累</small></div><SettingOutlined /></div></>;
   return <Layout className="workspace-layout">

@@ -48,7 +48,7 @@ function MermaidDiagram({ code }: { code: string }) {
 
   if (error) return <><Alert type="warning" title={error} /><pre>{code}</pre></>
   if (!svg) return <Skeleton active paragraph={{ rows: 2 }} title={false} />
-  return <div className="mermaid-diagram" role="img" aria-label="文档中的关系图" dangerouslySetInnerHTML={{ __html: svg }} />
+  return <div className="mermaid-diagram" role="img" tabIndex={0} aria-label="文档中的关系图，宽图可横向滚动" dangerouslySetInnerHTML={{ __html: svg }} />
 }
 
 const schema = {
@@ -81,12 +81,17 @@ export default function Markdown({ content, sourcePath = 'RESEARCH.md' }: { cont
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], rehypeSlug]}
       components={{
-        a({ href, children }) {
+        img({ src, alt, title }) {
+          return <img src={resolveDocumentLink(src ?? '', sourcePath)} alt={alt ?? ''} title={title} />
+        },
+        a({ href, children, id }) {
           const target = resolveDocumentLink(href ?? '', sourcePath)
-          if (!target) return <span>{children}</span>
-          if (target.startsWith('/') && !target.startsWith('//')) return <Link to={target}>{children}</Link>
-          if (target.startsWith('#')) return <Link to={`${location.pathname}${target}`}>{children}</Link>
-          return <a href={target} target="_blank" rel="noreferrer">{children}</a>
+          if (!target) return <span id={id}>{children}</span>
+          if (target.startsWith('/') && !target.startsWith('//') && !/^\/[^?#]*\.html(?:[?#]|$)/i.test(target)) {
+            return <Link id={id} to={target}>{children}</Link>
+          }
+          if (target.startsWith('#')) return <Link id={id} to={`${location.pathname}${target}`}>{children}</Link>
+          return <a id={id} href={target} target="_blank" rel="noreferrer">{children}</a>
         },
         table({ children }) {
           return <div className="markdown-table-scroll" tabIndex={0} role="region" aria-label="文档表格"><table>{children}</table></div>

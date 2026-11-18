@@ -1,3 +1,8 @@
+import type { Nodes, RootContent } from 'mdast';
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
+
 export type DocumentCategory = 'project' | 'paper' | 'experiment' | 'research';
 
 export interface ResearchDetail {
@@ -36,14 +41,23 @@ const sources = import.meta.glob<string>(
   [
     '../../../README.md',
     '../../../RESEARCH.md',
+    '../../../DISCUSSION.md',
+    '../../../PROPOSAL.md',
     '../../../AGENTS.md',
     '../../../.github/pull_request_template.md',
     '../../../.github/ISSUE_TEMPLATE/research-task.yml',
     '../../../papers/**/*.md',
     '../../../experiments/**/*.md',
+    '../../../archive/**/*.md',
   ],
   { eager: true, query: '?raw', import: 'default' },
 );
+
+const assetSources = import.meta.glob<string>(
+  ['../../../assets/**/*.{png,svg,pdf}', '../../../experiments/**/*.html'],
+  { eager: true, query: '?url', import: 'default' },
+);
+const assets = new Map(Object.entries(assetSources).map(([path, url]) => [path.replace(/^\.\.\/\.\.\/\.\.\//, ''), url]));
 
 function categoryFor(path: string): DocumentCategory {
   if (path === 'RESEARCH.md') return 'research';
@@ -61,7 +75,7 @@ export const documents: ResearchDocument[] = Object.entries(sources)
     return {
       id: path.replace(/\.(?:md|yml)$/i, ''),
       path,
-      title: markdown.match(/^#\s+(.+)$/m)?.[1].trim() ?? path.split('/').at(-1) ?? path,
+      title: (path.startsWith('archive/') ? '历史 · ' : '') + (markdown.match(/^#\s+(.+)$/m)?.[1].trim() ?? path.split('/').at(-1) ?? path),
       category: categoryFor(path),
       markdown,
     };
@@ -128,6 +142,90 @@ const researchDocument = documents.find((document) => document.path === 'RESEARC
 if (!researchDocument) throw new Error('The repository is missing RESEARCH.md');
 export const research = parseResearch(researchDocument.markdown, researchDocument.path);
 
+export interface ResearchQuestion {
+  id: string;
+  title: string;
+  question: string;
+  evidence?: string;
+  alternative?: string;
+  status: string;
+  boundary: string;
+  groupId: string;
+  markdown: string;
+  diagram?: string;
+  diagramCaption?: string;
+}
+
+export interface QuestionGroup {
+  id: string;
+  title: string;
+  description: string;
+  questions: ResearchQuestion[];
+}
+
+const markdownParser = unified().use(remarkParse).use(remarkGfm);
+const nodeText = (node: Nodes): string => 'value' in node ? node.value
+  : 'children' in node ? node.children.map(nodeText).join('') : '';
+const nodeMarkdown = (node: RootContent, markdown: string) =>
+  markdown.slice(node.position!.start.offset!, node.position!.end.offset!);
+
+function directionRows(markdown: string): Map<string, string[]> {
+  const table = markdownParser.parse(markdown).children.find((node) => node.type === 'table');
+  return new Map(table?.children.flatMap((row) => {
+    const cells = row.children.map(nodeText);
+    return /^D\d+$/.test(cells[0]) ? [[cells[0], cells]] : [];
+  }) ?? []);
+}
+
+export function parseQuestionGroups(details: ResearchDetail[]): QuestionGroup[] {
+  const menu = directionRows(details.find((item) => item.id === 'direction-menu')?.markdown ?? '');
+  return details.filter((item) => item.id.startsWith('directions-')).map((group) => {
+    const tree = markdownParser.parse(group.markdown);
+    const comparison = directionRows(group.markdown);
+    const headings = tree.children.flatMap((node, index) => {
+      const id = node.type === 'heading' && node.depth === 3 ? nodeText(node).match(/^(D\d+)\s*·/)?.[1] : undefined;
+      if (!id) return [];
+      const previous = tree.children[index - 1];
+      const start = previous && nodeMarkdown(previous, group.markdown).trim() === `<a id="${id.toLowerCase()}"></a>`
+        ? previous.position!.start.offset! : node.position!.start.offset!;
+      return [{ id, start }];
+    });
+    return {
+      id: group.id,
+      title: group.title,
+      description: tree.children.find((node) => node.type === 'paragraph')?.children.map(nodeText).join('') ?? '',
+      questions: headings.map(({ id, start }, index) => {
+        const entry = menu.get(id);
+        if (!entry) throw new Error(`RESEARCH.md: missing direction menu entry for ${id}`);
+        const summary = comparison.get(id);
+        const markdown = group.markdown.slice(start, headings[index + 1]?.start).trim();
+        const nodes = markdownParser.parse(markdown).children;
+        const diagramIndex = nodes.findIndex((node) => node.type === 'code' && node.lang === 'mermaid');
+        const diagram = nodes[diagramIndex];
+        const caption = nodes[diagramIndex - 1];
+        return {
+          id,
+          title: entry[2],
+          question: summary?.[1] ?? entry[4],
+          evidence: summary?.[2],
+          alternative: summary?.[3],
+          status: entry[3],
+          boundary: entry[4],
+          groupId: group.id,
+          markdown,
+          diagram: diagram ? nodeMarkdown(diagram, markdown) : undefined,
+          diagramCaption: caption?.type === 'paragraph' ? nodeText(caption) : undefined,
+        };
+      }),
+    };
+  });
+}
+
+export const historicalResearch = parseResearch(getDocument('archive/pre-v04/RESEARCH')!.markdown, 'archive/pre-v04/RESEARCH.md');
+export const questionGroups = parseQuestionGroups(historicalResearch.details);
+export const historicalCandidates = questionGroups.find((group) => group.id === 'directions-current')?.questions ?? [];
+export const questions = questionGroups.flatMap((group) => group.questions);
+
 function normalizePath(path: string): string | undefined {
   const parts: string[] = [];
   for (const part of path.split('/')) {
@@ -159,7 +257,7 @@ export function resolveDocumentLink(href: string, fromPath: string): string {
   const normalized = normalizePath(decodedPath.startsWith('/') ? decodedPath : `${directory}/${decodedPath}`);
   if (normalized === 'index.html') return `/${hash}`;
   const document = documents.find((entry) => entry.path === normalized);
-  return document ? `/documents/${encodeURIComponent(document.id)}${hash}` : href;
+  return document ? `/documents/${encodeURIComponent(document.id)}${hash}` : (assets.get(normalized ?? '') ?? href);
 }
 
 function searchText(markdown: string): string {
