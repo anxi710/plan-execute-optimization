@@ -48,6 +48,8 @@ const sources = import.meta.glob<string>(
     '../../../.github/ISSUE_TEMPLATE/research-task.yml',
     '../../../papers/**/*.md',
     '../../../experiments/**/*.md',
+    '../../../src/toolkit/README.md',
+    '../../../src/recipe/**/README.md',
     '../../../archive/**/*.md',
   ],
   { eager: true, query: '?raw', import: 'default' },

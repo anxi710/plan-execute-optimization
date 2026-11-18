@@ -55,6 +55,12 @@ describe('repository content', () => {
     expect(resolveDocumentLink('../PROPOSAL.md', 'papers/README.md')).toBe('/documents/PROPOSAL');
     expect(resolveDocumentLink('archive/pre-v04/RESEARCH.md#d03', 'RESEARCH.md')).toBe('/documents/archive%2Fpre-v04%2FRESEARCH#d03');
     expect(resolveDocumentLink('../../PROPOSAL.md', historicalResearch.sourcePath)).toBe('/documents/PROPOSAL');
+    const recipeId = 'src/recipe/strategy-sampling/README';
+    expect(resolveDocumentLink(`../../${recipeId}.md`, 'experiments/strategy-sampling/README.md'))
+      .toBe(`/documents/${encodeURIComponent(recipeId)}`);
+    expect(getDocument(recipeId)?.category).toBe('project');
+    expect(resolveDocumentLink('../../toolkit/README.md', `${recipeId}.md`))
+      .toBe('/documents/src%2Ftoolkit%2FREADME');
   });
 
   it('resolves proposal and paper images relative to their source document', () => {
