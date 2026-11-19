@@ -29,6 +29,11 @@ class BaseEnv(ABC):
         self.instruction = instruction
         self.max_steps = max_steps
 
+    @property
+    def initial_observation(self):
+        """Return the public task and initial observation prepared by the adapter."""
+        return self._initial_observation
+
     def reset(self):
         self.state = State(reward=0)
         task = self.plan_injection.initial_task(self._initial_observation)

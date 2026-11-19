@@ -63,7 +63,7 @@ ALFWorld 无现成数据时，按[官方指南](https://github.com/alfworld/alfw
 
 ScienceWorld 的 `environments.sciworld.max_steps` 为 `null` 时读取数据目录中的逐类预算。Recipe 可将它覆盖为正整数。两种文本环境均已回放至真实成功终局。ALFWorld 回放了已保存的 `dev` 任务 2 的四步动作，ScienceWorld 回放了非生物分类任务 variation 225 的七步官方参考动作。
 
-WebShop 使用 [Princeton 官方源码快照](https://github.com/princeton-nlp/WebShop/tree/64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd) 的文本 API。Python 3.11、Java 21、PySerini 0.17.0 和 NumPy 1.26.4 已用 1,000 商品索引验证任务选取和两次完整 rollout。脚本 Executor 各用三步完成搜索、点击和购买，原生奖励均为 1。测试数据来自[公开镜像 `ce990ff`](https://huggingface.co/datasets/YWZBrandon/webshop-data/tree/ce990ff)，未核对其与 Google Drive 原件的字节一致性。未验证全量商品库或浏览器环境。
+WebShop 使用 Princeton 官方源码快照 `64fa2a5` 的文本 API。Python 3.11、Java 21、PySerini 0.17.0 和 NumPy 1.26.4 已用 1,000 商品索引验证任务选取和两次完整 rollout。脚本 Executor 各用三步完成搜索、点击和购买，原生奖励均为 1。完整目录与 500 个官方测试目标的核验见 Planner-Centered 评测记录。测试数据来自公开镜像 `ce990ff`，与 Google Drive 原件的字节一致性未核实。浏览器环境未验证。[Princeton 官方源码快照](https://github.com/princeton-nlp/WebShop/tree/64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd) · [公开镜像](https://huggingface.co/datasets/YWZBrandon/webshop-data/tree/ce990ff) · [完整目录核验](../../experiments/planner-centered/README.md#完整测试集评测)
 
 任务文件 `webshop_<split>_tasks.jsonl` 每行需要 `id`、`task` 和整数 `session`。固定商品目录、索引和 `environments.webshop.catalog_seed` 后，用同一个 goal index 重置，并核对目标文本。购买时记录原生分数，仅满分算成功。
 

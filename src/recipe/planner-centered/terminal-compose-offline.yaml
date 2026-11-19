@@ -1,0 +1,7 @@
+services:
+  main:
+    network_mode: none
+    # Harbor explicitly builds the reviewed image before starting it.
+    pull_policy: never
+    build:
+      network: none

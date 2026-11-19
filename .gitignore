@@ -6,3 +6,6 @@ web/test-results/
 __pycache__/
 .impeccable/
 /experiments/strategy-sampling/runs/
+/experiments/planner-centered/runs/
+/experiments/planner-centered/alfworld/
+/experiments/planner-centered/alfworld.html

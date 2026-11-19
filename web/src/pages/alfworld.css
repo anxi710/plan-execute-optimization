@@ -1,0 +1,111 @@
+.alfworld-results { min-width: 0; }
+.alfworld-standalone { max-width: 1440px; margin: auto; padding: 32px 40px 60px; }
+.alfworld-standalone .aw-tabs > .ant-tabs-nav { top: 0; }
+.aw-page-header { display: flex; justify-content: space-between; gap: 24px; align-items: baseline; margin-bottom: 16px; }
+.aw-page-header h1 { font-size: 30px; line-height: 1.35; margin: 0 0 10px; letter-spacing: -.025em; }
+.aw-page-header p, .aw-page-header > a { color: var(--ctp-subtext0); font-size: 14px; }
+.aw-page-header > a { flex-shrink: 0; }
+.aw-tabs > .ant-tabs-nav { position: sticky; top: 64px; z-index: 5; background: var(--ctp-base); margin-bottom: 28px; }
+.aw-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 36px 0 16px; }
+.aw-section-heading > .ant-select { min-width: 255px; }
+.alfworld-results h2 { font-size: 21px; line-height: 1.5; margin: 0 0 10px; font-weight: 650; }
+.alfworld-results h3 { font-size: 16px; margin: 0 0 8px; }
+.alfworld-results h4 { font-size: 13px; color: var(--ctp-subtext0); margin: 0 0 8px; font-weight: 500; }
+.alfworld-results p { font-size: 14px; line-height: 1.8; margin: 8px 0 12px; max-width: 78ch; }
+.aw-muted { color: var(--ctp-subtext0); font-size: 13px; }
+.aw-takeaway { border-bottom: 1px solid var(--ctp-surface0); padding: 0 0 20px; }
+.aw-takeaway > p:first-of-type { color: var(--ctp-text); font-size: 16px; }
+.aw-analysis-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; }
+.aw-success-chart { margin: 0; }
+.aw-success-chart figcaption { margin-bottom: 22px; font-size: 15px; }
+.aw-success-chart figcaption span { font-size: 12px; color: var(--ctp-subtext0); margin-left: 8px; }
+.aw-bar-row { display: grid; grid-template-columns: 48px 1fr 75px; gap: 15px; align-items: center; margin-block: 18px; font-variant-numeric: tabular-nums; }
+.aw-bar-row > strong { font-size: 13px; }
+.aw-bar-row > span { text-align: right; font-weight: 600; }
+.aw-bar-row small, .aw-rate small { display: block; font-size: 12px; color: var(--ctp-subtext0); font-weight: 400; }
+.aw-bar-track { background: var(--ctp-surface0); height: 12px; overflow: hidden; border-radius: 3px; }
+.aw-bar-track > div { background: var(--ctp-lavender); height: 100%; }
+.aw-mode-pe-s .aw-bar-track > div { background: var(--ctp-blue); }
+.aw-mode-pe-d .aw-bar-track > div { background: var(--ctp-teal); }
+.aw-mode-pc .aw-bar-track > div { background: var(--ctp-mauve); }
+.aw-paired table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.aw-paired td, .aw-paired th { padding: 12px 8px; text-align: right; border-bottom: 1px solid var(--ctp-surface0); }
+.aw-paired th:first-child { text-align: left; }
+.aw-paired thead { color: var(--ctp-subtext0); }
+.aw-results-table { margin-top: 18px; font-variant-numeric: tabular-nums; }
+.aw-protocol-analysis { margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--ctp-surface0); }
+.aw-limitations { border-top: 1px solid var(--ctp-surface0); margin-top: 32px; padding-top: 28px; }
+.aw-limitations ul { padding-left: 20px; font-size: 14px; line-height: 1.9; }
+.aw-limitations li { margin-bottom: 10px; }
+.aw-failure-list { list-style: none; padding: 0 !important; }
+.aw-failure-list li { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 10px; border-bottom: 1px solid var(--ctp-surface0); }
+.alfworld-results summary { cursor: pointer; color: var(--ctp-lavender); font-size: 13px; padding: 8px 0; }
+.aw-filters { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(180px, 1.3fr) 1fr 1fr; gap: 12px; }
+.aw-filters > .ant-select { width: 100%; min-width: 0; }
+.aw-search { margin: 14px 0; max-width: 500px; }
+.aw-trial-table { font-variant-numeric: tabular-nums; }
+.aw-selected-row > td { background: var(--ctp-surface0) !important; }
+.aw-row-actions { display: flex; gap: 8px; }
+.aw-row-actions .ant-btn { padding-inline: 0; height: 30px; }
+.aw-reading-actions { display: flex; justify-content: space-between; gap: 20px; align-items: center; font-size: 13px; color: var(--ctp-subtext0); padding: 24px 0; }
+.aw-trace { border-top: 1px solid var(--ctp-surface1); padding-top: 26px; min-width: 0; }
+.aw-trace-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; }
+.aw-trace-heading h2 span { font-size: 14px; font-weight: 400; display: block; margin-top: 5px; color: var(--ctp-subtext1); overflow-wrap: anywhere; }
+.aw-success { color: var(--ctp-green); }
+.aw-failure { color: #f38ba8; }
+.aw-protocol { color: var(--ctp-lavender); }
+.aw-goal { background: var(--ctp-mantle); padding: 16px 20px; margin: 20px 0 28px; border-radius: 10px; }
+.aw-goal > strong { font-size: 12px; color: var(--ctp-subtext0); }
+.aw-goal > p { margin-bottom: 0; }
+.aw-timeline { margin: 20px 0 26px; }
+.aw-timeline-nodes { display: flex; flex-wrap: wrap; gap: 4px; padding-block: 8px 16px; }
+.aw-timeline .aw-node { width: 22px; min-width: 22px; height: 24px; padding: 0; border-color: currentColor; border-radius: 4px; font: 600 13px ui-monospace, monospace; }
+.aw-timeline-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--ctp-surface0); color: var(--ctp-subtext0); font-size: 12px; }
+.aw-timeline-legend b { margin-right: 6px; font: 600 13px ui-monospace, monospace; }
+.aw-symbol-P, .aw-symbol-G, .aw-symbol-D { color: var(--ctp-mauve); }
+.aw-symbol-E { color: var(--ctp-blue); }
+.aw-symbol-R { color: var(--ctp-yellow); }
+.aw-symbol-V { color: var(--ctp-green); }
+.aw-reader-tools { display: flex; gap: 12px; }
+.aw-reader-tools > .ant-select { min-width: 185px; }
+.aw-interactions { list-style: none; padding: 0; margin: 24px 0; }
+.aw-interaction { border-top: 1px solid var(--ctp-surface0); padding: 22px 0; scroll-margin-top: 150px; }
+.aw-interaction-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.aw-interaction-title > span { font-size: 12px; color: var(--ctp-subtext0); }
+.aw-planner .aw-interaction-title h3 { color: var(--ctp-mauve); }
+.aw-executor .aw-interaction-title h3 { color: var(--ctp-blue); }
+.aw-boundary .aw-interaction-title h3 { color: var(--ctp-yellow); }
+.aw-error .aw-interaction-title h3 { color: #f38ba8; }
+.aw-message-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.85; max-width: 78ch; }
+.aw-output { background: var(--ctp-mantle); padding: 18px 20px; border-radius: 10px; margin-top: 18px; }
+.aw-output h4 { color: var(--ctp-text); }
+.aw-prompt-message { padding: 16px 0; border-top: 1px solid var(--ctp-surface0); }
+.aw-prompt-message h5 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--ctp-subtext0); }
+.aw-raw-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; font: 14px/1.8 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.aw-reasoning { margin-top: 18px; }
+.aw-call-note { color: #f38ba8; margin-top: 12px; }
+.aw-fields { margin: 8px 0; }
+.aw-fields > div { margin: 10px 0 14px; }
+.aw-fields dt { color: var(--ctp-subtext0); font-size: 12px; margin-bottom: 5px; }
+.aw-fields dd { margin: 0; padding-left: 12px; border-left: 1px solid var(--ctp-surface1); }
+.aw-content-list { padding-left: 22px; }
+.aw-content-list > li { margin-block: 10px; }
+.aw-compare-selectors, .aw-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+.aw-trace-select { display: grid; gap: 10px; font-size: 13px; color: var(--ctp-subtext0); }
+.aw-trace-select .ant-select { width: 100%; }
+.aw-comparison { margin-top: 26px; }
+.aw-comparison > section { min-width: 0; }
+.aw-comparison .aw-trace-heading { display: block; }
+.aw-comparison .aw-trace-heading > .ant-tag { margin-bottom: 12px; }
+.aw-comparison .aw-reader-tools { flex-wrap: wrap; }
+.aw-loading { display: flex; gap: 16px; justify-content: center; align-items: center; padding: 65px 10px; color: var(--ctp-subtext0); }
+@media (max-width: 1150px) {
+  .aw-filters { grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr); }
+  .aw-analysis-grid { gap: 24px; }
+  .aw-comparison { gap: 20px; }
+}
+@media (max-width: 850px) {
+  .aw-analysis-grid { grid-template-columns: 1fr; }
+  .aw-section-heading { flex-wrap: wrap; }
+  .aw-compare-selectors, .aw-comparison { gap: 14px; }
+}

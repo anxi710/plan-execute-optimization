@@ -1,8 +1,19 @@
-"""Read YAML and JSONL, and write JSON or JSONL atomically."""
+"""Read YAML and JSON, and write files atomically."""
 
+import gzip
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+
+
+def read_json(path):
+    path = Path(path)
+    if path.suffixes[-2:] == [".json", ".gz"]:
+        with gzip.open(path, mode="rt", encoding="utf-8") as stream:
+            return json.load(stream)
+    with path.open(encoding="utf-8") as stream:
+        return json.load(stream)
 
 
 def read_jsonl(path):
@@ -20,7 +31,13 @@ def read_yaml_mapping(path):
 
 
 def write_json(path, value):
-    write_text_atomic(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    path = Path(path)
+    text = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    if path.suffixes[-2:] == [".json", ".gz"]:
+        with _atomic_output(path, mode="wb") as stream:
+            stream.write(gzip.compress(text.encode("utf-8"), compresslevel=1, mtime=0))
+    else:
+        write_text_atomic(path, text)
 
 
 def write_jsonl(path, rows):
@@ -28,12 +45,17 @@ def write_jsonl(path, rows):
 
 
 def write_text_atomic(path, text):
-    path = Path(path)
+    with _atomic_output(Path(path), mode="w", encoding="utf-8") as stream:
+        stream.write(text)
+
+
+@contextmanager
+def _atomic_output(path, **options):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+    with NamedTemporaryFile(dir=path.parent, delete=False, **options) as stream:
         temporary = Path(stream.name)
         try:
-            stream.write(text)
+            yield stream
             stream.close()
             temporary.replace(path)
         finally:

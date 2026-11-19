@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "build": "tsc --noEmit && vite build",
+    "build:alfworld": "tsc --noEmit && vite build --config alfworld.vite.config.ts",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "test": "vitest run",
     "test:e2e": "playwright test"

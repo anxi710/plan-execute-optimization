@@ -1,10 +1,12 @@
 # 研究工作台
 
-更新：2026-11-17 · 阶段：提案 v0.4 通过审核 · [研究网站](http://localhost:5173/)
+更新：2026-11-20 · 阶段：提案 v0.4 通过审核 · [研究网站](http://localhost:5173/)
 
 ## 当前判断
 
 当前研究聚焦高层 Planner 的战略探索、执行证据支持的低成本评价与策略更新。研究问题与思路见[提案 v0.4](PROPOSAL.md)。
+
+四种框架通过一次真实模型接口复验。EO 无外部规划，PE-S 首步前交付一次，PE-D 续接同一个整项任务请求，PC 随反馈发出新的阶段委派。四组均在四步后通过同一 ALFWorld 开发任务。该样本确认控制流；完整测试集结果和待人工核验的轨迹见实验记录。[轨迹与源码](experiments/planner-centered/README.md)
 
 <details id="judgment-context">
 <summary>方向切换与历史方案</summary>
@@ -20,7 +22,7 @@
 <details id="unknown-context">
 <summary>尚未确定的设计与证据</summary>
 
-规划表示、内部形成过程、评价方法和更新算法尚未选定。多轮形成、经验检索、元规划库、树搜索和条件转换图均不因方向切换成为必需组件。Planner-Centered 保留为独立设想，不覆盖 full-plan 交付给固定 Executor 的主线。
+规划表示、内部形成过程、评价方法和更新算法尚未选定。多轮形成、经验检索、元规划库、树搜索和条件转换图均不因方向切换成为必需组件。四框架评测的后端、返回协议和预算已记录在[实验实现](src/recipe/planner-centered/README.md)，后续机制对照与训练设计仍待确定。
 
 首轮 ALFWorld 诊断确认了一个独立采样漏掉可行路线的案例。该路线由固定 Executor 三次执行成功，与独立采样代表路线的步数相同。发生频率、跨任务和模型的适用范围仍待验证。[采样诊断](experiments/strategy-sampling/README.md)
 
@@ -28,7 +30,7 @@
 
 ## 下一步
 
-先复核采样诊断的路线标注与执行差异，再讨论第一轮原型的规划接口、可用执行证据、学习对象和对照。
+ALFWorld 的 134 个官方测试任务已跑完四模型、四框架的 2,144 个组合。定向补回 110 条外部故障缺评后，全部组合均有原生评分，134 个任务均可进行全配置比较。Terminal-Bench 在 167 条有效评分均为零后按研究者决定终止，已有轨迹供人工核验。WebShop 和 ScienceWorld 已停止，已有评分用于同任务比较。[正式验收](experiments/planner-centered/audit.html) · [四套同任务比较](experiments/planner-centered/audit-preview.html) · [实验记录](experiments/planner-centered/README.md)
 
 <details id="next-context">
 <summary>原型推进方式</summary>
@@ -84,7 +86,8 @@
 | 项目关注方向 | 2026-11-12 研究者明确要求转向 PROPOSAL.md 中的新提案。 |
 | v0.4 内容审核 | 2026-11-17，研究者在 Codex 对话中同意将 [PROPOSAL.md](PROPOSAL.md) v0.4 列为通过审核。审核对应 2026-11-11 的正文修订。 |
 | 旧研究方案 | 保存于 archive/pre-v04/RESEARCH.md，保留原题卡、证据和决定；不再作为当前计划。 |
-| 具体设计与实施 | 研究者授权使用 DeepSeek 开展首轮采样诊断。第一轮原型的细节仍待讨论。 |
+| 首轮采样诊断 | 研究者授权使用 DeepSeek 开展首轮采样诊断。 |
+| 四框架接口验收 | 2026-11-19 研究者授权使用同济 API。真实接口验收完成，[HTML 与源码](experiments/planner-centered/README.md)待研究者审核。 |
 
 此前的分组、编号、归并与审核决定保存在[历史决定](archive/pre-v04/RESEARCH.md#decisions)。固定研究约束与操作规则仍见 [README](README.md) 和 [AGENTS](AGENTS.md)，不复制为另一套状态。
 

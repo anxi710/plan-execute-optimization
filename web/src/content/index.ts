@@ -48,6 +48,7 @@ const sources = import.meta.glob<string>(
     '../../../.github/ISSUE_TEMPLATE/research-task.yml',
     '../../../papers/**/*.md',
     '../../../experiments/**/*.md',
+    '!../../../experiments/planner-centered/runs/{runtime,data}/**/*.md',
     '../../../src/toolkit/README.md',
     '../../../src/recipe/**/README.md',
     '../../../archive/**/*.md',
@@ -56,7 +57,11 @@ const sources = import.meta.glob<string>(
 );
 
 const assetSources = import.meta.glob<string>(
-  ['../../../assets/**/*.{png,svg,pdf}', '../../../experiments/**/*.html'],
+  [
+    '../../../assets/**/*.{png,svg,pdf}',
+    '../../../experiments/**/*.html',
+    '!../../../experiments/planner-centered/runs/{runtime,data}/**/*.html',
+  ],
   { eager: true, query: '?url', import: 'default' },
 );
 const assets = new Map(Object.entries(assetSources).map(([path, url]) => [path.replace(/^\.\.\/\.\.\/\.\.\//, ''), url]));
