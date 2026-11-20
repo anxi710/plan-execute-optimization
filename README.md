@@ -13,9 +13,10 @@ flowchart LR
   P["相对小型 Planner · 优化参数"] -->|计划| E["Executor · 冻结"]
   E --> T["环境交互"]
   T -->|训练反馈| P
+  E -.->|Planner-Centered 阶段反馈| P
 ```
 
-主线保留独立 Planner 形成高层 full-plan、固定 Executor 负责执行的接口。规划形成可以包含多次调用，具体机制与表示尚未选定。Planner 优先使用相对小的模型，兼顾能力与成本；主实验只更新 Planner。跨 Executor 复用保留为后续分析，Planner-Centered 为独立设想。具体问题与论证见[当前提案](PROPOSAL.md)。
+提案以 EO、PE-S、PE-D 和 PC 比较外部规划的介入时机与阶段委派权限。各组使用固定 Executor。Planner 优先使用相对小的模型，进入学习阶段后只更新 Planner。跨 Executor 复用保留为后续分析。具体设定见[当前提案](PROPOSAL.md#2-共同设定与框架选择)。
 
 不预设长时程特异性。按[研究判断原则](AGENTS.md#研究判断)定位真实困难、核查近邻与简单基线，再选择优化方法。研究问题不受现有训练基座或奖励实现限制；研究者可以按问题需要搭建新框架，已有实现仅作背景与复用参考。
 

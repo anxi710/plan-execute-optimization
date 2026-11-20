@@ -1,10 +1,10 @@
 # 研究工作台
 
-更新：2026-11-20 · 阶段：提案 v0.4 通过审核 · [研究网站](http://localhost:5173/)
+更新：2026-11-20 · 阶段：提案 v0.5 通过审核 · [研究网站](http://localhost:5173/)
 
 ## 当前判断
 
-当前研究聚焦高层 Planner 的战略探索、执行证据支持的低成本评价与策略更新。研究问题与思路见[提案 v0.4](PROPOSAL.md)。
+当前研究聚焦高层 Planner 的战略探索、执行证据支持的低成本评价与策略更新。已通过审核的[提案 v0.5](PROPOSAL.md)按 EO、PE-S、PE-D 和 PC 定义框架对照。
 
 四种框架通过一次真实模型接口复验。EO 无外部规划，PE-S 首步前交付一次，PE-D 续接同一个整项任务请求，PC 随反馈发出新的阶段委派。四组均在四步后通过同一 ALFWorld 开发任务。该样本确认控制流；完整测试集结果和待人工核验的轨迹见实验记录。[轨迹与源码](experiments/planner-centered/README.md)
 
@@ -42,9 +42,9 @@ ALFWorld 的 134 个官方测试任务已跑完四模型、四框架的 2,144 �
 <details id="current-proposal" open>
 <summary>当前提案与阅读材料</summary>
 
-- [当前研究提案 v0.4 · 高层规划器优化](PROPOSAL.md)
+- [当前研究提案 v0.5 · 高层规划器优化](PROPOSAL.md)
 - [Full-plan 优化文献调研](papers/fullplan-optimization-review.md)：一次规划的形成过程、学习近邻与证据筛选。
-- [Planner-Centered 架构调研](papers/planner-centered-review.md)：独立分支的先例、状态语义与未决优化对象。
+- [Planner-Centered 架构调研](papers/planner-centered-review.md)：在线闭环的架构先例、状态语义与未决优化对象。
 - [历史研究方案](archive/pre-v04/RESEARCH.md)：切换前的完整题卡、来源、草案和决定，仅作历史参考。
 
 </details>
@@ -84,7 +84,8 @@ ALFWorld 的 134 个官方测试任务已跑完四模型、四框架的 2,144 �
 | 事项 | 状态与依据 |
 |---|---|
 | 项目关注方向 | 2026-11-12 研究者明确要求转向 PROPOSAL.md 中的新提案。 |
-| v0.4 内容审核 | 2026-11-17，研究者在 Codex 对话中同意将 [PROPOSAL.md](PROPOSAL.md) v0.4 列为通过审核。审核对应 2026-11-11 的正文修订。 |
+| v0.4 内容审核 | 2026-11-17，研究者在 Codex 对话中同意将 v0.4 列为通过审核。审核对应 2026-11-11 的正文修订，见 `0076b55:PROPOSAL.md`。 |
+| v0.5 内容审核 | 2026-11-18，研究者在 Codex 对话中批准 2026-11-18 修订的 [PROPOSAL.md](PROPOSAL.md)，范围包括四种框架的正文、总览图与四张详图。审核对应未提交的工作区版本。 |
 | 旧研究方案 | 保存于 archive/pre-v04/RESEARCH.md，保留原题卡、证据和决定；不再作为当前计划。 |
 | 首轮采样诊断 | 研究者授权使用 DeepSeek 开展首轮采样诊断。 |
 | 四框架接口验收 | 2026-11-19 研究者授权使用同济 API。真实接口验收完成，[HTML 与源码](experiments/planner-centered/README.md)待研究者审核。 |

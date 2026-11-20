@@ -7,9 +7,9 @@
 ## 专题调研
 
 - [Full-plan 优化：生成过程、证据与文献筛选](fullplan-optimization-review.md)：区分一次规划内部调用与任务级重规划，审查战略探索、执行评价和参数学习的近邻。
-- [Planner-Centered：机制近邻与证据边界](planner-centered-review.md)：核查在线整体规划维护的架构先例、状态语义与适用限制；保留为独立设想。
+- [Planner-Centered：机制近邻与证据边界](planner-centered-review.md)：核查在线整体规划维护的架构先例、状态语义与适用限制。
 
-两份调研服务于 [research proposal v0.4](../PROPOSAL.md)，不代表已经采用其中机制或获得本项目实验结果。
+两份调研服务于 [当前研究提案](../PROPOSAL.md)，不代表已经采用其中机制或获得本项目实验结果。
 
 ## 保存方式
 

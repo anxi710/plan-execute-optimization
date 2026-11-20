@@ -1,16 +1,17 @@
 import { expect, test } from '@playwright/test'
 
-test('opens the approved proposal with its review and figures, and preserves historical topic evidence', async ({ page }) => {
+test('opens the current proposal with its review and figures, and preserves historical topic evidence', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.summary-card')).toHaveCount(3)
   const summary = await page.locator('.research-summary').boundingBox()
   expect(summary!.y + summary!.height).toBeLessThan(page.viewportSize()!.height)
   await expect(page.locator('.research-summary table')).toHaveCount(0)
-  await expect(page.locator('.stage-tag')).toContainText('提案 v0.4 通过审核')
+  await expect(page.locator('.stage-tag')).toContainText('提案 v0.5 通过审核')
   await expect(page.locator('.question-card')).toHaveCount(0)
   await page.getByRole('link', { name: '阅读提案', exact: true }).click()
   await expect(page).toHaveURL('/documents/PROPOSAL')
-  await expect(page.locator('.markdown-body img')).toHaveCount(2)
+  await expect(page.getByRole('heading', { name: '2.1 Planner-Centered 的在线闭环' })).toBeVisible()
+  await expect(page.locator('.markdown-body img')).toHaveCount(6)
   for (const image of await page.locator('.markdown-body img').all()) {
     await expect(image).toBeVisible()
     await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0)
@@ -18,6 +19,7 @@ test('opens the approved proposal with its review and figures, and preserves his
   await page.getByRole('link', { name: '研究者审核记录', exact: true }).click()
   await expect(page).toHaveURL('/documents/RESEARCH#decisions')
   await expect(page.locator('details#decisions').getByRole('row', { name: /v0\.4 内容审核/ })).toContainText('列为通过审核')
+  await expect(page.locator('details#decisions').getByRole('row', { name: /v0\.5 内容审核/ })).toContainText('研究者在 Codex 对话中批准')
   await page.goto('/questions')
   await expect(page.getByRole('heading', { name: '历史问题', exact: true })).toBeVisible()
   const firstTopic = '/questions/D03'
