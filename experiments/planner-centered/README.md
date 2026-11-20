@@ -50,6 +50,8 @@ python -m http.server 4174 --bind 127.0.0.1 --directory experiments/planner-cent
 
 ALFWorld 官方测试集评分已结束。正式验收页按原生判定、配对任务和模型用量汇总。WebShop 和 ScienceWorld 按研究者决定停止。Terminal-Bench 在已出有效分数均为零后终止，原始结果供人工核验。比较快照保留四套已有轨迹及各自的范围。[正式验收 HTML](audit.html) · [四套配对比较 HTML](audit-preview.html) · [评测协议](../../src/recipe/planner-centered/README.md#完整测试集) · [已中断的开发预跑](runs/benchmark-01/manifest.json)
 
+`audit-preview.html` 是从本地保存轨迹重新导出的派生比较页，约 4.2 MB，与 `runs/`、ALFWorld 导出数据一样保留本地，不纳入 Git。使用 Recipe 说明中的 `preview.py --alfworld-run alfworld-test-01-recovery-03` 可重新生成；这只读取既有记录，不重跑模型。
+
 ALFWorld 已调度四模型、四框架、134 个正式测试任务，共 2,144 条轨迹。主机重启后从检查点续跑。一次集中启动错误发生在模型调用前，468 条原生评分保留，1,657 条启动失败记录已归档，相关任务在切换临时目录后恢复真实模型评分。恢复补丁让首个事件前的已知启动错误不占模型尝试额度。该补丁的调用在清单中单独标注。运行中以逐条轨迹检查点为准。[运行清单](runs/alfworld-test-01/manifest.json) · [启动错误原始清单](runs/alfworld-test-01/incident-20261119T093443/original-manifest.json) · [游戏映射](runs/data/alfworld/alfworld_test_gamefiles.jsonl) · [初始运行源码补丁](runs/alfworld-test-01/source.patch) · [恢复源码补丁](runs/alfworld-test-01/recovery-source.patch)
 
 首轮全部 2,144 格均有真实模型调用记录，2,034 格取得原生评分。110 格缺评，其中 99 格遇到 HTTP 429、6 格遇到服务端错误、4 格遇到连接错误、1 格超时。在所有模型与框架均有评分的 57 个共同任务上，EO、PE-S、PE-D 和 PC 的均分依次为 0.465、0.447、0.289、0.294。[首轮运行清单](runs/alfworld-test-01/manifest.json)
