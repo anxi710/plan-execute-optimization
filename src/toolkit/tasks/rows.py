@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from ..prompt.plans import extract_plan
+from ..prompts import extract_plan
 from ..utils.files import read_jsonl
 
 

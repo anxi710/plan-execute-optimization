@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from toolkit.prompt.executor.plan_injection import PlanInjection
+from toolkit.prompts import PlanInjection, render_action_feedback
 from toolkit.rollout.state import State
 from toolkit.rollout.traces import conversation_parts, load_records, load_trace
 from toolkit.utils.files import write_json
@@ -16,10 +16,14 @@ class TraceTest(unittest.TestCase):
             for sample_id in (1, 0):
                 state = State(steps=1, finished=True, success=sample_id == 1)
                 state.action_trace = [{"observation": observation}]
+                feedback = observation
+                if sample_id == 1:
+                    state.action_trace[0]["available_actions"] = ["take cup from cupboard"]
+                    feedback = render_action_feedback(observation, ["take cup from cupboard"])
                 state.history = [
                     {"role": "user", "content": "Find a cup."},
                     {"role": "assistant", "content": "Action: open cupboard"},
-                    {"role": "user", "content": PlanInjection("observation", "Check cupboards").observation(observation)},
+                    {"role": "user", "content": PlanInjection("observation", "Check cupboards").observation(feedback)},
                 ]
                 data = state.to_dict()
                 data[-1].update(task_id=3, sample_id=sample_id)
@@ -30,6 +34,9 @@ class TraceTest(unittest.TestCase):
             prefix, pairs = conversation_parts(record)
             self.assertEqual(prefix[0]["content"], "Find a cup.")
             self.assertTrue(pairs[0][1]["content"].startswith(observation))
+            self.assertIn("take cup from cupboard", pairs[0][1]["content"])
+            legacy, = load_records(root, 3, sample_id=0)
+            self.assertEqual(conversation_parts(legacy)[0][0]["content"], "Find a cup.")
             record["trace"][0]["observation"] = "Observation: Something else."
             with self.assertRaisesRegex(ValueError, "Trace/history observation mismatch"):
                 conversation_parts(record)

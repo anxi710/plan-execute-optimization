@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .base import ActionResult, BaseEnv
-from ..prompt.executor.template import load_executor_instruction, resolve_executor_instruction_path
+from ..prompts import load_executor_instruction, resolve_executor_instruction_path
 from ..utils.config import DEFAULT_CONFIG
 
 
@@ -50,12 +50,12 @@ def open_webshop_backend(config=DEFAULT_CONFIG):
 class WebShopEnv(BaseEnv):
     """Use fixed goal indices and score the native purchase result."""
 
-    def __init__(self, task, env, *, plan_placement, instruction_path, max_steps):
+    def __init__(self, task, env, *, instruction_path, max_steps):
         self.task = task
         self.env = env
         super().__init__(
-            observation=task.observation, plan=task.plan, plan_placement=plan_placement,
-            instruction=load_executor_instruction(instruction_path), max_steps=max_steps,
+            observation=task.observation,
+            instruction=load_executor_instruction("webshop", instruction_path), max_steps=max_steps,
         )
 
     def reset(self):
@@ -63,27 +63,26 @@ class WebShopEnv(BaseEnv):
         if self.env.get_instruction_text().split() != self.task.observation.split():
             raise ValueError(f"WebShop goal differs for task {self.task.task_id}")
         self.available = self.env.get_available_actions()
-        self._initial_observation = f"{self.task.observation}\n\nObservation: {self._with_actions(observation)}"
+        self._initial_observation = f"{self.task.observation}\n\nObservation: {observation}"
         return super().reset()
 
-    def _with_actions(self, observation):
+    def get_available_actions(self):
         actions = ["search[keywords]"] if self.available["has_search_bar"] else []
         actions.extend(f"click[{label}]" for label in self.available["clickables"] if label != "search")
-        return f"{observation}\nAvailable actions: {', '.join(actions)}"
+        return actions
 
     def execute_action(self, action):
         match = WEBSHOP_ACTION.fullmatch(action)
         if match is None or not (target := match[2].strip()):
-            return ActionResult(self._with_actions("Use search[keywords] or click[label]."), self.state.reward, False)
+            return ActionResult("Choose one action from the current environment actions.", self.state.reward, False)
         verb = match[1]
         if verb == "search":
             allowed = self.available["has_search_bar"] and target.split()[0].lower() not in INTERNAL_SEARCH_PREFIXES
         else:
             allowed = target.lower() != "search" and target.lower() in self.available["clickables"]
         if not allowed:
-            return ActionResult(self._with_actions("That action is not available."), self.state.reward, False)
+            return ActionResult("That action is not available.", self.state.reward, False)
         observation, reward, done, _ = self.env.step(f"{verb}[{target}]")
         if not done:
             self.available = self.env.get_available_actions()
-            observation = self._with_actions(observation)
         return ActionResult(observation, float(reward), True, done=done, success=done and reward >= 1.0)

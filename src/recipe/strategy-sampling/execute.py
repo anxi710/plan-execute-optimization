@@ -14,14 +14,13 @@ from pathlib import Path
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_ROOT))
 from toolkit.envs.alfworld_env import alfworld_settings
-from toolkit.prompt.executor.plan_injection import PlanInjection
-from toolkit.prompt.executor.template import load_executor_instruction
+from toolkit.prompts import PlanInjection, load_executor_instruction
 from toolkit.utils.config import resolve_config
 from toolkit.utils.files import read_yaml_mapping
 
 
 def load_queue(run_dir, data_dir, split):
-    from toolkit.prompt.plans import extract_plan
+    from toolkit.prompts import extract_plan
     from toolkit.tasks.alfworld import load_alfworld_rows
     from toolkit.utils.files import read_jsonl
 
@@ -50,13 +49,15 @@ def load_queue(run_dir, data_dir, split):
 
 
 def equivalent_instruction_path(saved, settings):
-    # A relocated historical prompt is equivalent only when its contents match.
-    if not isinstance(saved, dict) or not isinstance(saved.get("environment"), dict):
+    # Preserve saved prompt text as the evidence when its old file no longer exists.
+    if (not isinstance(saved, dict) or not isinstance(saved.get("environment"), dict)
+            or "instruction_path" not in saved["environment"]):
         return False
     previous = saved["environment"].get("instruction_path")
     current = settings["environment"]["instruction_path"]
-    if (isinstance(previous, str) and previous != current and Path(previous).is_file()
-            and Path(previous).read_bytes() == Path(current).read_bytes()):
+    if (previous != current and (previous is None or isinstance(previous, str))
+            and isinstance(saved.get("executor_instruction"), str)
+            and saved["executor_instruction"] == settings.get("executor_instruction")):
         saved["environment"]["instruction_path"] = current
     return saved == settings
 
@@ -155,7 +156,7 @@ def main(argv=None):
         save_settings(output / "run_settings.meta", {
             "executor": agent_config, "environment": env_config, "data_dir": str(data_dir),
             "environment_versions": {package: version(package) for package in ("alfworld", "textworld")},
-            "executor_instruction": load_executor_instruction(env_config["instruction_path"]),
+            "executor_instruction": load_executor_instruction("alfworld", env_config["instruction_path"]),
             "split": split, "samples_per_plan": samples_per_plan, "plan_placement": placement,
             "concurrency": concurrency,
         }, equivalent=equivalent_instruction_path)

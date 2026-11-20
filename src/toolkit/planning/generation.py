@@ -5,8 +5,7 @@ from os import PathLike
 from pathlib import Path
 
 from ..agents.openai_agent import AsyncChatClient
-from ..prompt.planner.templates import render_planner_prompt
-from ..prompt.plans import extract_plan
+from ..prompts import extract_plan, render_planner_prompt
 from ..tasks.rows import task_rows_by_id
 from ..utils.config import DEFAULT_CONFIG
 from ..utils.files import read_jsonl, write_jsonl

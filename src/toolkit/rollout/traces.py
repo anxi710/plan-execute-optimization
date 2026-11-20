@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from ..prompt.executor.plan_injection import PLAN_HINT
+from ..prompts import PLAN_HINT, render_action_feedback
 
 
 def load_trace(path):
@@ -89,6 +89,8 @@ def conversation_parts(record):
             raise ValueError(f"Missing message content at step {step}: {record['path']}")
         # With observation placement, the saved user message also includes the plan.
         observation = event.get("observation") if isinstance(event, dict) else None
+        if isinstance(observation, str) and "available_actions" in event:
+            observation = render_action_feedback(observation, event["available_actions"])
         if not isinstance(observation, str) or not (
             feedback["content"] == observation
             or feedback["content"].startswith(f"{observation}\n\n{PLAN_HINT}\n")

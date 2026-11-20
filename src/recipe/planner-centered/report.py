@@ -942,7 +942,7 @@ def render(run_dir, output, prior_audit=None, benchmark_dirs=()):
         (ROOT / "PROPOSAL.md", "研究提案"),
         (ROOT / "Planner_Centered_Test_Proposal.pdf", "测试提案 PDF"),
         (Path(__file__).parent / "README.md", "Recipe 与复现说明"),
-        (Path(__file__).parent / "runner.py", "四种框架运行器"),
+        (ROOT / "src/toolkit/frameworks/control.py", "四种框架控制逻辑"),
         (Path(__file__).parent / "run.py", "真实模型运行入口"),
         (manifest_path, "运行清单 JSON"),
         (run_dir / "source.patch", "运行时源码补丁"),

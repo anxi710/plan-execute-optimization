@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from toolkit.prompt.planner.templates import render_planner_prompt
+from toolkit.prompts import render_planner_prompt
 from toolkit.rollout.terminalbench import load_terminalbench_trial
 from toolkit.tasks.rows import task_rows_by_id
 from toolkit.tasks.terminalbench import TerminalBenchTask

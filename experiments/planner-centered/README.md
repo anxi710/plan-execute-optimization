@@ -25,6 +25,8 @@ EO、PE-S、PE-D 和 PC 在同一 ALFWorld `dev/2` 初态上各完成一次真�
 
 `runs/` 为本地证据。审查页内嵌了公开事件与模型响应，可以离线查看。源文件、运行清单和原始 JSON 的链接依赖本地仓库目录。
 
+当前工作区的[框架实现](../../src/toolkit/README.md#四种运行框架)已将任务上下文与日志元数据、运行器技术限制分开。执行额度等限制只由运行器执行和记录，不告知模型。Planner 改用高层规划提示词，Executor 从[环境接口](../../src/toolkit/README.md#统一提示词)获取当前候选动作；候选目录与 Planner 的原始观察分开。历史运行的原始 prompt 保持原样，不按新规则改写。这些协议修改未重跑实验，也未核验它们对既有结果的影响。
+
 ## 完整测试集评测
 
 ALFWorld 的[独立结果页](alfworld.html)从[原审查页](audit.html)拆出，读取最终合并清单，展示结果分析、轨迹阅读与双栏对比。四种架构按实际交互协议展示完整 prompt 和原始 response：prompt 按原始 role 顺序逐条展示，内容逐字保留，不转换字段、不截断；环境反馈与模型调用、规划交付、阶段委派和反馈边界可在轨迹中定位。页面不额外展示日志时间戳和运行元数据，原始 prompt 内已有的字段仍原样保留。评分只使用最终有效尝试，归档尝试计入可核对成本。
@@ -56,7 +58,7 @@ ALFWorld 已调度四模型、四框架、134 个正式测试任务，共 2,144 
 
 第一轮实际调用覆盖全部 110 格，取得 59 条原生评分。余下 51 格均再次遇到 HTTP 429。第二轮使用 2 路并发，取得 50 条原生评分和 1 条超时。第三轮串行补回最后 1 条评分。三轮均无本机请求速率上限。合并清单保留首轮 2,034 条有效轨迹和各轮归档的原始字节，共有 2,144 条有效评分、134 个全配置共同任务。得分表只链接最终有分的轨迹，缺评格用文字标记，归档依旧计入可核对成本。[第一轮补跑清单](runs/alfworld-test-01-recovery-01/manifest.json) · [第二轮名单](runs/alfworld-test-01-recovery-02/recovery-selection-02.json) · [第三轮名单](runs/alfworld-test-01-recovery-03/recovery-selection-03.json) · [合并后的最终清单](runs/alfworld-test-01-recovery-03/manifest.json)
 
-在 73 个 Qwen 四框架共同有分的 ALFWorld 任务中，PE-D 有 72 次、PC 有 73 次在首次 Planner 回复被协议拒绝。模型把已提供的整数 ID `1` 写成了字符串 `"1"`。当前零分集中反映了这项输出格式差异。[PE-D 示例](runs/alfworld-test-01/trials/m4-t1-pe-d.json) · [PC 示例](runs/alfworld-test-01/trials/m4-t1-pc.json) · [协议解析](../../src/recipe/planner-centered/runner.py)
+在 73 个 Qwen 四框架共同有分的 ALFWorld 任务中，PE-D 有 72 次、PC 有 73 次在首次 Planner 回复被协议拒绝。模型把已提供的整数 ID `1` 写成了字符串 `"1"`。当前零分集中反映了这项输出格式差异。[PE-D 示例](runs/alfworld-test-01/trials/m4-t1-pe-d.json) · [PC 示例](runs/alfworld-test-01/trials/m4-t1-pc.json) · [协议解析](../../src/toolkit/frameworks/control.py)
 
 ScienceWorld 按研究者决定停止正式评分。四模型运行曾切换为 DeepSeek 单模型，保留全部 1,819 个官方变体的任务清单。停止时单模型记录中有 102 条原生评分、85 条缺评和 5 条中断轨迹。四模型原始轨迹保存在独立快照中。两份清单保留实际运行证据。[完整任务表](runs/data/sciworld/sciworld_test_tasks.jsonl) · [DeepSeek 停止清单](runs/sciworld-test-01/manifest.json) · [四模型快照](runs/sciworld-test-01-four-models/manifest.json) · [切换源码补丁](runs/runtime/sciworld-deepseek-source.patch)
 

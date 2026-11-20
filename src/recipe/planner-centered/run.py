@@ -18,9 +18,9 @@ SOURCE_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = SOURCE_ROOT.parent
 sys.path.insert(0, str(SOURCE_ROOT))
 
-from runner import run_trial
 from toolkit.agents.openai_agent import AsyncChatClient
 from toolkit.envs.alfworld_env import AlfWorldEnv, alfworld_settings
+from toolkit.frameworks import run_framework
 from toolkit.tasks.alfworld import AlfWorldRolloutPool, load_alfworld_rows
 from toolkit.utils.files import write_json
 
@@ -123,9 +123,9 @@ async def run_matched_trial(pool, row, client, *, mode, workspace_id, save,
         planner_limit = PLANNER_LIMITS[mode]
     with pool.open_slot() as slot:
         task = slot.load_task(row)
-        env = AlfWorldEnv(task, plan_placement="query", **{**alfworld_settings(), "max_steps": executor_limit})
+        env = AlfWorldEnv(task, **{**alfworld_settings(), "max_steps": executor_limit})
         model_options = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
-        return await run_trial(
+        return await run_framework(
             mode=mode, env=env, goal=task_goal(row), constraints=CONSTRAINTS.copy(),
             workspace_id=workspace_id, executor_limit=executor_limit,
             planner_limit=planner_limit, return_every=return_every,

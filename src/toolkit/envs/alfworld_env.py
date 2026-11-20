@@ -3,7 +3,7 @@
 import re
 
 from .base import ActionResult, BaseEnv
-from ..prompt.executor.template import load_executor_instruction, resolve_executor_instruction_path
+from ..prompts import load_executor_instruction, resolve_executor_instruction_path
 from ..utils.config import DEFAULT_CONFIG
 
 
@@ -19,14 +19,26 @@ def alfworld_settings(config=DEFAULT_CONFIG):
 class AlfWorldEnv(BaseEnv):
     """Translate Executor actions and ALFWorld's native feedback."""
 
-    def __init__(self, task, *, plan_placement, instruction_path,
+    def __init__(self, task, *, instruction_path,
                  max_steps=DEFAULT_CONFIG["environments"]["default_max_steps"], **_):
         self.task = task
+        self.available = None
         super().__init__(
-            observation=task.observation, plan=task.plan, plan_placement=plan_placement,
-            instruction=load_executor_instruction(instruction_path),
+            observation=task.observation,
+            instruction=load_executor_instruction("alfworld", instruction_path),
             max_steps=max_steps,
         )
+
+    def reset(self):
+        if self.task.admissible_commands is None:
+            raise ValueError("ALFWorld task has no native admissible commands from reset")
+        self.available = self.task.admissible_commands.copy()
+        return super().reset()
+
+    def get_available_actions(self):
+        if self.available is None:
+            raise ValueError("Reset the ALFWorld adapter before reading its available actions")
+        return self.available.copy()
 
     @staticmethod
     def parse_action(reply):
@@ -36,6 +48,7 @@ class AlfWorldEnv(BaseEnv):
 
     def execute_action(self, action: str) -> ActionResult:
         observations, _, dones, info = self.task.env.step([action])
+        self.available = info["admissible_commands"][0].copy()
         observation = observations[0]
         if observation.startswith("You arrive at loc "):
             observation = observation[observation.find(". ") + 2:]

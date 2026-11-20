@@ -14,8 +14,9 @@ from uuid import uuid4
 
 from benchmark import CONCURRENCY, PURPOSE, SCHEMA_VERSION, run_matrix
 from run import model_call
-from runner import run_trial
 from toolkit.envs.webshop_env import WebShopEnv, webshop_settings
+from toolkit.frameworks import run_framework
+from toolkit.prompts import HARD_CONSTRAINTS_TEMPLATE, render_action_feedback
 from toolkit.tasks.webshop import WebShopTask
 from toolkit.utils.files import read_json, write_json
 from webshop_catalog import TEST_GOALS, UPSTREAM_REVISION, goal_key, shared_server
@@ -42,8 +43,7 @@ def isolated_environment(server, task, executor_limit):
     env = WebAgentTextEnv(observation_mode="text", server=server, session_prefix=f"{uuid4().hex}-")
     startup_session = env.session
     try:
-        adapter = WebShopBenchmarkEnv(task, env, plan_placement="query",
-                                      **{**webshop_settings(), "max_steps": executor_limit})
+        adapter = WebShopBenchmarkEnv(task, env, **{**webshop_settings(), "max_steps": executor_limit})
         yield adapter
     finally:
         # The upstream constructor creates a random initial session before the task-specific reset.
@@ -56,7 +56,7 @@ async def run_one(server, task, client, *, mode, workspace_id, model_settings, m
                   save, executor_limit, planner_limit, return_every):
     options = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
     with isolated_environment(server, task, executor_limit) as env:
-        return await run_trial(
+        return await run_framework(
             mode=mode, env=env, planner=model_call(client, "planner", planner_limit, **options) if planner_limit else None,
             executor=model_call(client, "executor", executor_limit, **options), goal=task.observation,
             constraints=CONSTRAINTS, workspace_id=workspace_id, executor_limit=executor_limit,
@@ -172,6 +172,7 @@ def context_limit_evidence(record, identity, max_input_bytes, executor_limit):
             or any(event["type"] == "tool_error" for event in events)):
         return None
     prefix = []
+    expected_history = []
     for action, call in zip(actions, calls, strict=True):
         reply = (call.get("response") or {}).get("text")
         if (call.get("status") != "complete" or call.get("error") is not None or not isinstance(reply, str)
@@ -179,10 +180,21 @@ def context_limit_evidence(record, identity, max_input_bytes, executor_limit):
                 or action.get("dispatched") is not (action.get("action") is not None)
                 or not isinstance(action.get("observation"), str) or type(action.get("valid")) is not bool):
             return None
+        observation = action["observation"]
+        if "available_actions" in action:
+            available = action["available_actions"]
+            if not isinstance(available, list) or any(not isinstance(item, str) for item in available):
+                return None
+            observation = render_action_feedback(observation, available)
+        expected_history.append((reply, {"role": "user", "content": observation}))
         prefix.append((reply, action))
+    if any("available_actions" in action for action in actions) and not all(
+        "available_actions" in action for action in actions
+    ):
+        return None
     history = [(message["content"], messages[index + 1]) for index, message in enumerate(messages[:-1])
                if message.get("role") == "assistant"]
-    if history != [(reply, {"role": "user", "content": action["observation"]}) for reply, action in prefix]:
+    if history != expected_history:
         return None
     return initial[0]["observation"], prefix, blocked["event_id"], size
 
@@ -248,13 +260,36 @@ def replay_native_context_limits(run_dir, data_dir):
             initial, prefix, blocked_id, input_bytes = evidence
             with isolated_environment(server, task, limit) as env:
                 _, state = env.reset()
-                if env.initial_observation != initial:
+                legacy = "available_actions" not in prefix[0][1]
+                replay_initial = (render_action_feedback(env.initial_observation, env.get_available_actions())
+                                  if legacy else env.initial_observation)
+                if replay_initial != initial:
                     print(f"{trial_id}: initial observation changed; still unscored")
                     continue
+                if not legacy:
+                    initial_message = state.history[0].copy()
+                    if record["constraints"]:
+                        listed = "\n".join(f"- {constraint}" for constraint in record["constraints"])
+                        initial_message["content"] += HARD_CONSTRAINTS_TEMPLATE.format(constraints=listed)
+                    blocked = record["events"][blocked_id - 1]
+                    if initial_message != blocked["messages"][0]:
+                        print(f"{trial_id}: initial Executor input changed; still unscored")
+                        continue
                 for reply, action in prefix:
                     _, state = env.step(reply)
+                    if state.finished:
+                        print(f"{trial_id}: tool event {action['event_id']} ended the episode; still unscored")
+                        break
                     expected = {key: action[key] for key in ("action", "observation", "valid")}
-                    if state.finished or state.action_trace[-1] != expected:
+                    actual = {key: state.action_trace[-1][key] for key in expected}
+                    if legacy:
+                        actual["observation"] = render_action_feedback(
+                            actual["observation"], state.action_trace[-1]["available_actions"],
+                        )
+                    else:
+                        expected["available_actions"] = action["available_actions"]
+                        actual["available_actions"] = state.action_trace[-1]["available_actions"]
+                    if actual != expected:
                         print(f"{trial_id}: tool event {action['event_id']} changed; still unscored")
                         break
                 else:

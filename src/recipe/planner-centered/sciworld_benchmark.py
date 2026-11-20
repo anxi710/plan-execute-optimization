@@ -10,8 +10,8 @@ from pathlib import Path
 
 from benchmark import CONCURRENCY, MAX_CONCURRENCY, MODELS, run_matrix
 from run import model_call
-from runner import run_trial
 from toolkit.envs.sciworld_env import DEFAULTS, SciWorldEnv, open_sciworld_backend, sciworld_settings
+from toolkit.frameworks import run_framework
 from toolkit.tasks.sciworld import SciWorldTask
 from toolkit.utils.files import write_jsonl
 
@@ -80,9 +80,9 @@ async def run_sciworld(run_dir, catalog_dir, step_limits_path, api_key, *, concu
             server = await slots.get()
             try:
                 config = {**sciworld_settings(), "max_steps": executor_limit}
-                env = SciWorldEnv(task, server, plan_placement="query", **config)
+                env = SciWorldEnv(task, server, **config)
                 model = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
-                return await run_trial(
+                return await run_framework(
                     mode=mode, env=env, goal=task.observation, constraints=CONSTRAINTS,
                     workspace_id=workspace_id, executor_limit=executor_limit, planner_limit=planner_limit,
                     return_every=return_every, save=save, benchmark="sciworld",

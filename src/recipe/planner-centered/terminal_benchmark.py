@@ -22,9 +22,9 @@ from harbor.models.task.task import strip_canary
 from harbor.models.task.verifier_mode import VerifierEnvironmentMode, resolve_task_verifier_mode
 from harbor.models.trial.config import AgentConfig, EnvironmentConfig, TaskConfig, TrialConfig
 from harbor.trial.trial import Trial
-from runner import run_trial
 from toolkit.envs.base import BaseEnv
-from toolkit.prompt.executor.template import render_executor_prompt
+from toolkit.frameworks import run_framework
+from toolkit.prompts import TERMINALBENCH_EXECUTOR_TEMPLATE, render_executor_prompt
 from toolkit.rollout.state import State
 from toolkit.rollout.terminalbench import load_terminalbench_trial
 from toolkit.tasks.terminalbench import TerminalBenchTask
@@ -63,11 +63,6 @@ CONSTRAINTS = [
     "Use only the public task files and the local /app workspace.",
     "The isolated task has no network access.",
 ]
-INSTRUCTION = """You are the Executor for this Terminal-Bench task.
-Return one Action line per turn. Action: <one shell command> runs a command in /app.
-Use Action: finish when the complete task is ready for independent verification.
-You can inspect local inputs, create task artifacts, and check your work.
-Files persist across turns. Each command starts in /app."""
 COMMAND_TIMEOUT = 30
 OUTPUT_LIMIT = 2_000
 OFFLINE_COMPOSE = Path(__file__).with_name("terminal-compose-offline.yaml")
@@ -294,7 +289,7 @@ class TerminalWorkspace:
         self.max_steps = max_steps
 
     def reset(self):
-        prompt = render_executor_prompt(INSTRUCTION, self.initial_observation)
+        prompt = render_executor_prompt(TERMINALBENCH_EXECUTOR_TEMPLATE, self.initial_observation)
         self.state = State(history=[{"role": "user", "content": prompt}])
         return prompt, self.state
 
@@ -594,7 +589,7 @@ class TerminalRecipeAgent(BaseAgent):
             raise ValueError("Harbor returned an unexpected task instruction")
         options = active["runner_options"]
         env = TerminalWorkspace(environment, instruction, options["executor_limit"])
-        active["record"] = await run_trial(
+        active["record"] = await run_framework(
             env=env, goal=instruction, constraints=CONSTRAINTS,
             benchmark="terminalbench", external_verifier=True, **options,
         )

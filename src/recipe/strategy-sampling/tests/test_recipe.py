@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -28,6 +29,29 @@ def load_script(name):
 
 
 class StrategySamplingTest(unittest.IsolatedAsyncioTestCase):
+    def test_instruction_relocation_requires_matching_text_and_other_settings(self):
+        experiment = load_script("execute")
+        settings = {"environment": {"instruction_path": None, "max_steps": 30},
+                    "executor_instruction": "Exact instruction.\n", "executor": {"model_name": "fake-model"}}
+        saved = deepcopy(settings)
+        saved["environment"]["instruction_path"] = "/removed/instructions/alfworld_inst.txt"
+        self.assertTrue(experiment.equivalent_instruction_path(saved, settings))
+        self.assertEqual(saved, settings)
+
+        for change in ("text", "max_steps", "missing_text", "missing_path"):
+            with self.subTest(change=change):
+                saved = deepcopy(settings)
+                saved["environment"]["instruction_path"] = "/removed/instructions/alfworld_inst.txt"
+                if change == "text":
+                    saved["executor_instruction"] = "Different instruction.\n"
+                elif change == "max_steps":
+                    saved["environment"]["max_steps"] = 29
+                elif change == "missing_text":
+                    del saved["executor_instruction"]
+                else:
+                    del saved["environment"]["instruction_path"]
+                self.assertFalse(experiment.equivalent_instruction_path(saved, settings))
+
     def test_only_condition_b_receives_its_earlier_routes(self):
         planner = load_script("sample")
 
@@ -117,12 +141,12 @@ class StrategySamplingTest(unittest.IsolatedAsyncioTestCase):
 
             def step(actions):
                 executed_actions.extend(actions)
-                return ["Finished."], [1], [True], {"won": [True]}
+                return ["Finished."], [1], [True], {"won": [True], "admissible_commands": [[]]}
 
             def load_task(task_row):
                 resets.append(task_row["gamefile"])
                 return SimpleNamespace(
-                    observation=task_row["task"], env=SimpleNamespace(step=step),
+                    observation=task_row["task"], env=SimpleNamespace(step=step), admissible_commands=list(plans),
                 )
 
             @contextmanager

@@ -1,17 +1,16 @@
 # 四种规划框架的接口验收
 
-本 Recipe 用同一个 ALFWorld 开发任务检验四种框架的控制流和证据隔离，接口定义见下表。请求、返回、隔离验收与对照要求参考本地测试提案 `Planner_Centered_Test_Proposal.pdf` 的 §2、§5 和 §6.2。该 PDF 不纳入 Git。测试提案的三组主比较与本次四组接口验收属于不同阶段。
+本 Recipe 调用 [`toolkit.frameworks`](../../toolkit/README.md#四种运行框架) 中的 EO、PE-S、PE-D 和 PC，负责装配模型、环境、预算与结果分析。框架控制策略和证据协议由 [`frameworks/control.py`](../../toolkit/frameworks/control.py) 的 `run_framework()` 入口维护；四框架与固定计划采样共用 [`RolloutSession`](../../toolkit/rollout/session.py) 的执行循环，批量调度共用 [`sample_jobs()`](../../toolkit/rollout/batch.py)。[组件边界](../../toolkit/README.md#执行与采样的组合)
 
-| 框架 | Planner 调用 | Executor 收到的任务 |
-| --- | --- | --- |
-| EO | 0 次 | 整项任务，自主推理、探索和纠错 |
-| PE-S | 执行前调用一次 | 整项任务，附固定的初始整体规划 |
-| PE-D | 执行前及固定返回边界 | 同一个整项任务请求，更新剩余整体规划 |
-| PC | 执行前、阶段返回后及可用预算内的环境终止反馈后 | 有独立请求编号的阶段目标，保留原目标与硬约束 |
+环境模板、框架协议文本与渲染、解析函数统一从 `toolkit.prompts` 导入。修改内置提示词时，按环境或框架协议编辑对应模板；Executor 自定义文件覆盖方式见[统一提示词](../../toolkit/README.md#统一提示词)。
+
+当前工作区的 Planner 模板只要求高层子目标、前提和证据，不列具体动作命令。Executor 使用环境返回的当前候选动作；候选目录与 Planner 的原始公开观察分开，来源及 Terminal-Bench 的接口例外见[统一提示词](../../toolkit/README.md#统一提示词)。这与下述历史验收的提示协议不同，已有结果和原始 prompt 保持原样，没有按新协议重跑。
+
+本次接口验收用同一个 ALFWorld 开发任务检验控制流和证据隔离。请求、返回、隔离验收与对照要求参考本地测试提案 `Planner_Centered_Test_Proposal.pdf` 的 §2、§5 和 §6.2。该 PDF 不纳入 Git。测试提案的三组主比较与本次四组接口验收属于不同阶段。
 
 各组独立加载同一个已核对的 `dev/2` 游戏。组内持续使用同一个环境和 Executor 对话。运行器在完成两个原子动作轮后检查返回边界。格式错误也消耗动作轮额度。Executor 可调整软指导，使用各组共有的工具与提示词。PE-D 和 PC 延续已完成工具动作的结果。PC 使用固定阶段额度，由 Planner 决定下一阶段或是否结束。
 
-Planner 可见初始观察、公开动作与观察、来源明确的 Executor 陈述和剩余预算。未验证假设单独保存。ALFWorld 的原生任务结束信号可触发收尾，`won` 与奖励只在停止后写入验收记录。任务终局始终由环境判定。此后不再发起模型调用或环境动作。文本动作同步返回，所以本适配器可在动作之间安全续接。非原子操作中途暂停和后端原生阶段返回留待其他适配器验证。
+Planner 可见任务、规划、初始观察、公开动作与观察及来源明确的 Executor 陈述。未验证假设单独保存。执行额度、返回间隔等技术限制由运行器执行和记录，不告知模型；具体输入边界见[框架接口](../../toolkit/README.md#四种运行框架)。ALFWorld 的原生任务结束信号可触发收尾，PC 可在运行器允许时记录结束建议，`won` 与奖励只在停止后写入验收记录。任务终局始终由环境判定。停止并记录原生判定后不再发起模型调用或环境动作。文本动作同步返回，所以本适配器可在动作之间安全续接。非原子操作中途暂停和后端原生阶段返回留待其他适配器验证。
 
 ## 运行
 
@@ -37,10 +36,11 @@ PYTHONPATH=src python src/recipe/planner-centered/report.py --run-dir "$RUN_DIR"
 ## 离线检查
 
 ```bash
+PYTHONPATH=src python -m unittest discover -s src/toolkit/tests -q
 PYTHONPATH=src python -m unittest discover -s src/recipe/planner-centered/tests -q
 ```
 
-离线检查使用脚本化模型验证模式隔离、状态持续、预算、证据、错误和终局语义。真实调用用来核对这些结构是否实际出现。这个已见开发任务用于接口联调。正式成功率、成本比较与学习收益需要独立的任务和实验协议。
+框架检查使用脚本化模型验证模式隔离、状态持续、预算、证据、错误和终局语义；Recipe 检查覆盖调度、存储、后端适配和结果导出。真实调用用来核对这些结构是否实际出现。这个已见开发任务用于接口联调。正式成功率、成本比较与学习收益需要独立的任务和实验协议。
 
 [本次真实验收记录](../../../experiments/planner-centered/README.md)保存完整轨迹、首轮失败和两轮对应的源码补丁。
 

@@ -29,7 +29,7 @@ class LiveBackendTest(unittest.TestCase):
         with pool.open_slot() as slot:
             for _ in range(2):
                 task = slot.load_task(row)
-                env = AlfWorldEnv(task, plan_placement="query", **alfworld_settings())
+                env = AlfWorldEnv(task, **alfworld_settings())
                 prompt, _ = env.reset()
                 self.assertIn(row["task"], prompt)
                 _, state = env.step("Action: look")
@@ -41,7 +41,7 @@ class LiveBackendTest(unittest.TestCase):
         tasks, _ = SciWorldTask.load_tasks(os.environ["TOOLKIT_SCIWORLD_DATA"])
         task = next(task for task in tasks if task.sub_task_name.endswith("find-non-living-thing"))
         with open_sciworld_backend() as backend:
-            env = SciWorldEnv(task, backend, plan_placement="query", **sciworld_settings())
+            env = SciWorldEnv(task, backend, **sciworld_settings())
             prompt, _ = env.reset()
             self.assertIn("Observation: ", prompt)
             _, state = env.step("Action: look around")

@@ -4,18 +4,38 @@
 
 ## 基础库与 Recipe
 
-基础库提供模型、环境、提示词、任务加载和轨迹等可复用组件。Recipe 使用 toolkit 中已有的对应组件，包括提示词与解析逻辑。替换或自行实现已有组件须取得研究者明确授权。依赖方向由 recipe 指向 toolkit。每份 recipe 负责装配组件、编排实验流程，并记录选用的模型、提示词、benchmark、对照条件和预算。Python 环境由调用方提供。
+基础库提供模型、环境、提示词、运行框架、任务加载和轨迹等可复用组件。Recipe 使用 toolkit 中已有的对应组件，包括提示词与解析逻辑。替换或自行实现已有组件须取得研究者明确授权。依赖方向由 recipe 指向 toolkit。每份 recipe 负责装配组件、编排实验流程，并记录选用的模型、提示词、benchmark、对照条件和预算。Python 环境由调用方提供。
 
 ## 统一提示词
 
-Recipe 选择 benchmark 并提供输入，模板和解析方式由 toolkit 维护。
+Recipe 选择 benchmark 并提供输入，模板和解析方式由 `toolkit.prompts` 维护。公共模板常量、渲染与解析函数、`PlanInjection` 均从这个入口导入。
 
 | 角色 | 输入 | 输出 |
 | --- | --- | --- |
-| Planner | `render_planner_prompt(benchmark, task)` 接收 `alfworld`、`sciworld`、`webshop` 或 `terminalbench`，以及 benchmark 提供的完整任务文本。模板填入 `<task>`，并说明环境约束。 | 回复使用 `<plan>...</plan>`，按步骤列出计划。`extract_plan()` 取首个标签正文。沿用原解析规则，回复缺少标签时保留去除首尾空白后的文本。 |
-| Executor | ALFWorld、ScienceWorld 或 WebShop 的执行指令、当前任务和每步环境反馈。可按 `query`、`observation` 或 `thought` 注入已有计划。 | 每步含一行非空 `Action: ...`，前面可带 `Thought:`。环境适配器执行解析出的动作并生成下一条观察。 |
+| Planner | `render_planner_prompt(benchmark, task)` 接收 `alfworld`、`sciworld`、`webshop` 或 `terminalbench`，以及任务与公开观察。模板填入 `<task>`，要求抽象子目标、前提和证据，不列具体动作命令。 | 回复使用 `<plan>...</plan>`，按步骤列出高层计划。`extract_plan()` 取首个标签正文。沿用原解析规则，回复缺少标签时保留去除首尾空白后的文本。 |
+| Executor | 对应 benchmark 的执行指令、当前任务和每步环境反馈。ALFWorld、ScienceWorld 与 WebShop 的当前候选动作由环境接口提供。可按 `query`、`observation` 或 `thought` 注入已有计划。 | 每步含一行非空 `Action: ...`，前面可带 `Thought:`；`Thought` 是可选推理文本，不是环境动作。环境适配器执行解析出的动作并生成下一条观察。 |
 
-Planner 的指令文本在 `prompt/planner/instruction/`，由 `prompt/planner/templates.py` 加载和渲染。计划解析在 `prompt/plans.py`。Executor 的指令文本在 `prompt/executor/instructions/`，由 `prompt/executor/template.py` 加载和渲染。[ALFWorld 战略采样 Recipe](../recipe/strategy-sampling/README.md#运行)
+提示词按环境保存在 `prompts/alfworld.py`、`sciworld.py`、`webshop.py` 和 `terminalbench.py`。每个文件包含对应的 `*_PLANNER_TEMPLATE` 与 `*_EXECUTOR_TEMPLATE` 常量，由 `prompts/__init__.py` 统一导出，并用 `.format()` 插值。这种组织方式参考 verl-agent `796ed310` 的 `agent_system/environments/prompts/`；Planner 的抽象规划要求参考本地 `verl-agent-system` 的 `prompts_planner/alfworld.py`。
+
+| 文件 | 职责 |
+| --- | --- |
+| `prompts/frameworks.py` | 集中维护框架协议、指导和约束模板，不执行控制策略。 |
+| `prompts/templates.py` | 选择和渲染模板，加载显式指定的自定义指令文件。 |
+| `prompts/plans.py` | 解析模型返回的计划。 |
+| `prompts/plan_injection.py` | 构造计划注入文本，由执行会话应用。 |
+
+ALFWorld、ScienceWorld 和 WebShop 的 `environments.<benchmark>.instruction_path` 默认设为 `null`，使用环境模块的内置 Executor 常量。显式指定 UTF-8 文件路径时，仍按既有路径规则加载自定义指令。Terminal-Bench 的执行指令也由对应环境模块提供。环境适配器不持有计划注入策略，也不选择或调用模型。[ALFWorld 战略采样 Recipe](../recipe/strategy-sampling/README.md#运行)
+
+Executor 不维护手写动作目录。ALFWorld 的候选缓存方式参考 verl-agent 的 admissible commands 接口，每次原生 reset/step 后更新。候选只加入 Executor 消息，Planner 使用原始公开观察与已经执行的动作，不额外接收这份候选目录。
+
+| 后端 | Executor 动作接口 |
+| --- | --- |
+| ALFWorld | 原生 reset/step 的 `info["admissible_commands"]`。 |
+| ScienceWorld | 原生 reset/step 的 `info["valid"]`。 |
+| WebShop | 当前页面的 `get_available_actions()`；搜索关键词仍是开放参数。 |
+| Terminal-Bench | 实际 shell 执行与 `finish` 接口，没有有限可枚举的候选目录。 |
+
+同一后端的四种框架使用相同的动作信息。候选表示当前允许的操作，不保证推进任务或成功；不读取 expert plan、gold path 或隐藏评分。这次提示协议已改变，已有实验结果和原始 prompt 保持原样，没有按新协议重跑。
 
 ## 计划提供的能力
 
@@ -35,11 +55,54 @@ Planner 的指令文本在 `prompt/planner/instruction/`，由 `prompt/planner/t
 | --- | --- |
 | `agents/` | `BaseModel` 定义调用和计量接口。`AsyncChatClient` 支持限并发的 OpenAI 兼容请求，`MeteredExecutor` 复用该客户端并计量执行用量。 |
 | `tasks/` | 按任务 ID、划分和分片选择任务，校验计划与任务的对应关系。ALFWorld 支持生成 `task_id → gamefile` 映射，SciWorld 按子任务与 variation 加载。 |
-| `envs/` | `BaseEnv` 管理对话、动作轨迹和步数。ALFWorld、SciWorld 和 WebShop 适配器处理初态、动作反馈和 benchmark 的终局判定。 |
-| `prompt/` | 管理统一的 Planner 和 Executor 提示、计划注入和输出解析。 |
+| `envs/` | `BaseEnv` 管理环境状态、动作轨迹和步数。ALFWorld、SciWorld 和 WebShop 适配器处理初态、动作反馈和 benchmark 的终局判定。 |
+| `prompts/` | 按环境组织 Planner 和 Executor 模板，集中管理框架提示、渲染、计划注入和输出解析。 |
 | `planning/` | `generate_plans()` 使用统一模板批量生成计划，记录用量并支持校验与续跑。 |
-| `rollout/` | 采样单条或一批轨迹。记录检查点、终局与中断，并读取、核对及筛选已有轨迹。 |
+| `frameworks/` | EO、PE-S、PE-D 和 PC 的控制策略，管理规划介入、阶段委派、公开反馈、预算与停止条件。 |
+| `rollout/` | 共享执行会话与运行循环，组合批量采样、记录输出和已有轨迹读取。 |
 | `utils/` | 读写 JSON 和 JSONL，写入时原子替换目标文件。 |
+
+## 四种运行框架
+
+`from toolkit.frameworks import MODES, InvalidPlannerDecision, run_framework` 提供框架控制入口、模式集合与规划协议异常。调用方通过 `mode` 选择控制策略；四种策略共用 `rollout.session.RolloutSession` 的模型调用、环境推进与执行循环。
+
+| `mode` | Planner 介入 | Executor 收到的任务 |
+| --- | --- | --- |
+| `eo` | 不调用 | 整项任务，自主推理、探索和纠错。 |
+| `pe-s` | 执行前调用一次 | 整项任务，附固定的初始整体规划。 |
+| `pe-d` | 执行前及固定返回边界 | 同一个整项任务请求，更新剩余整体规划。 |
+| `pc` | 执行前、阶段返回后及可用预算内的环境终止反馈后 | 有独立请求编号的阶段目标，保留原目标与硬约束。 |
+
+`await run_framework(...)` 接收环境 `env`、异步模型回调 `planner` 和 `executor`、`goal`、`constraints`、`workspace_id`、`executor_limit`、`planner_limit`、`return_every` 及保存回调 `save`。模型回调接收消息列表，返回含 `text` 的响应字典，可附结束原因和用量；EO 的 `planner` 可设为 `None`。环境复用 toolkit 的 reset/step 与状态接口，`step` 也可返回异步结果。`benchmark` 选择共享 Planner 模板，默认 `alfworld`。`external_verifier=True` 时，由调用方在在线控制结束后补充独立评分。
+
+执行会话维护持续环境与 Executor 历史。框架构造 Planner 可见的公开证据，决定规划和执行何时交接；环境原生评分在在线控制停止后读取。模型、环境实例、预算、落盘位置和批量调度由调用方装配。[Planner-Centered Recipe](../recipe/planner-centered/README.md)提供四个 benchmark 的装配示例。
+
+Planner 上下文显式选取任务目标、硬约束、原始公开观察、未验证假设、整体规划、剩余工作和证据引用。`event_id` 与 `evidence_refs` 沿用已有的公开观察引用协议。反馈只提供已执行的公开动作与观察、来源明确的 Executor 陈述。当前候选动作目录由环境接口提供给 Executor，和 Planner 的任务证据分开构造。
+
+执行额度用于防止无限运行，由运行器执行并记录。Planner / Executor 调用上限与剩余额度、返回间隔、阶段动作上限和内部返回原因不写入模型输入。日志事件和内部状态也不整体序列化为模型输入；日志类型、时间戳、工作区与请求 ID、`plan_version`、用量和 token 统计只保留在记录中。模型实际收到的 prompt 与 response 仍完整保存，供回查。
+
+## 执行与采样的组合
+
+| 部分 | 接口与职责 |
+| --- | --- |
+| 执行会话 | [`RolloutSession`](rollout/session.py) 统一环境初始化、模型调用、同步或异步动作推进和持续执行。返回边界处保留同一环境与对话，供控制策略继续使用。 |
+| 框架控制 | [`run_framework()`](frameworks/control.py) 组合执行会话，决定何时规划、更新整体指导、委派阶段或停止。 |
+| 批量采样 | [`sample_jobs()`](rollout/batch.py) 负责并发和结果顺序。调用方的 `open_worker` 异步上下文提供单样本执行函数，并管理模型和环境资源。 |
+| 记录输出 | [`rollout/log.py`](rollout/log.py) 处理事件和状态记录。保存回调决定落盘方式，执行会话不依赖文件路径或某一种磁盘格式。 |
+
+`RolloutRunner.run(row, plan, save)` 接收外部生成的固定计划，组合上述执行会话完成 PE-S 的执行采样；同一计划可独立采样多次。`plan=None` 时执行无计划采样。`run_framework()` 在共享执行能力上组合四种框架的控制策略。原有状态轨迹与四框架事件轨迹沿用各自的保存和读取接口。
+
+自行组合控制逻辑时，提供环境、异步模型回调和返回边界函数：
+
+```python
+from toolkit.rollout.session import RolloutSession
+
+session = RolloutSession(env, {"executor": executor})
+session.reset()
+await session.run(after_step=controller)
+```
+
+`executor(messages)` 返回含 `text` 的响应字典。`controller(tool_event)` 可同步或异步执行；返回 `None` 时继续，返回停止或暂停理由时交还控制权。暂停后可更新对话，再次调用 `session.run()`，延续同一环境和执行历史。每个独立样本创建新的会话。调用方通过 `EventLog` 的保存回调接入记录输出；会话不自行选择文件路径。
 
 ## 组合运行
 
@@ -47,7 +110,7 @@ Planner 的指令文本在 `prompt/planner/instruction/`，由 `prompt/planner/t
 
 - `tasks.rows.load_task_rows()` 可选择 canonical 任务并绑定计划文件。`tasks.alfworld.prepare_gamefile_map()` 从本地环境生成映射。并发执行时，每条 ALFWorld 轨迹用已确认的游戏文件重新初始化。
 - `toolkit.planning.generation.generate_plans()` 接收任务行或任务 JSONL，用指定 benchmark 的统一模板为每个任务生成一份计划。输出记录回复、用量和实际设置，续跑时跳过已经保存且通过校验的任务。
-- `rollout.batch.run_rollouts()` 接收样本队列、模型和环境组件，按并发上限采样。Recipe 提供每条样本的 seed 和结果路径，决定是否续跑。`load_saved_rollout()` 校验记录属于哪条样本，显式重试时调用 `archive_incomplete_rollout()` 保留中断轨迹。
+- `rollout.batch.run_rollouts()` 为固定计划采样装配任务、模型、环境和状态日志，再调用共享的 `sample_jobs()`。Recipe 提供每条样本的 seed 和结果路径，决定是否续跑。`load_saved_rollout()` 校验记录属于哪条样本，显式重试时调用 `archive_incomplete_rollout()` 保留中断轨迹。
 - `rollout.traces.load_trace()` 读取已完成轨迹，`load_records()` 可按任务、样本和成功状态筛选，`conversation_parts()` 核对每条环境反馈与消息记录。
 
 SciWorld 可用 `tasks.sciworld.SciWorldTask.load_tasks()` 和 `envs.sciworld_env.open_sciworld_backend()` 装配。默认使用安装包内的 JAR。历史环境如需指定自己的 JAR，显式传入 `jar_path`。

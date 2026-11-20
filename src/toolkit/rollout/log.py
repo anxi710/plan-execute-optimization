@@ -1,8 +1,29 @@
-"""Persist one rollout's checkpoints and final state."""
+"""Record execution events and persist rollout checkpoints."""
 
 import time
+from datetime import datetime, timezone
 
 from ..utils.files import write_json
+
+
+class EventLog:
+    """Keep execution events independent of their storage format."""
+
+    def __init__(self, events=None, *, context=dict, save=None):
+        self.events = [] if events is None else events
+        self._context = context
+        self._save = save
+
+    def emit(self, kind, **fields):
+        event = {"event_id": len(self.events) + 1, "type": kind,
+                 "timestamp": datetime.now(timezone.utc).isoformat(), **self._context(), **fields}
+        self.events.append(event)
+        self.flush()
+        return event
+
+    def flush(self):
+        if self._save is not None:
+            self._save()
 
 
 class JsonRolloutLog:

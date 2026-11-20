@@ -41,7 +41,7 @@ class WebShopCatalogTest(unittest.TestCase):
                 goal = eager.server.goals[task_index]
                 eager.reset(session=task_index)
                 task = WebShopTask("fixture", task_index, eager.get_instruction_text())
-                env = WebShopEnv(task, eager, plan_placement="query", **webshop_settings())
+                env = WebShopEnv(task, eager, **webshop_settings())
                 start, _ = env.reset()
                 search = f"search[{goal['name']}]"
                 web_result, _ = env.step(f"Action: {search}")

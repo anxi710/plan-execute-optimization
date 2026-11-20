@@ -81,8 +81,10 @@ class BenchmarkAdapterTest(unittest.TestCase):
         self.assertEqual(task.variation_idx, 4)
         (self.path / "max_steps.json").write_text(json.dumps({"conductivity": 3}), encoding="utf-8")
         game = Mock()
-        game.reset.return_value = ("look", {"taskDesc": "Task Description:\nTest  conductivity", "score": 20})
-        env = SciWorldEnv(task, game, plan_placement="query", **sciworld_settings())
+        game.reset.return_value = (
+            "look", {"taskDesc": "Task Description:\nTest  conductivity", "score": 20, "valid": ["look around"]},
+        )
+        env = SciWorldEnv(task, game, **sciworld_settings())
         self.assertEqual(env.max_steps, 3)
         prompt, state = env.reset()
         self.assertIn("Test  conductivity\n\nObservation: look", prompt)
@@ -90,7 +92,7 @@ class BenchmarkAdapterTest(unittest.TestCase):
         self.assertEqual(state.reward, 0.2)
         env.step("No action")
         self.assertEqual(state.reward, 0.2)
-        game.step.return_value = ("finished", 80, True, {"score": 100})
+        game.step.return_value = ("finished", 80, True, {"score": 100, "valid": []})
         _, state = env.step("Action: focus on object")
         self.assertTrue(state.success)
         self.assertEqual((state.reward, state.terminate_reason), (1.0, "success"))
@@ -100,8 +102,8 @@ class BenchmarkAdapterTest(unittest.TestCase):
 
         (self.path / "max_steps.json").unlink()
         config = resolve_config({"environments": {"sciworld": {"max_steps": 1}}})
-        game.reset.return_value = ("look", {"taskDesc": "Test conductivity", "score": 0})
-        limited = SciWorldEnv(task, game, plan_placement="query", **sciworld_settings(config))
+        game.reset.return_value = ("look", {"taskDesc": "Test conductivity", "score": 0, "valid": ["look around"]})
+        limited = SciWorldEnv(task, game, **sciworld_settings(config))
         limited.reset()
         _, state = limited.step("No action")
         self.assertEqual(state.terminate_reason, "max_steps")
@@ -132,7 +134,7 @@ class BenchmarkAdapterTest(unittest.TestCase):
             {"has_search_bar": False, "clickables": ["buy now"]},
         ]
         game.step.side_effect = [("item page", 0.0, False, None), ("done", 0.75, True, None)]
-        env = WebShopEnv(task, game, plan_placement="query", **webshop_settings())
+        env = WebShopEnv(task, game, **webshop_settings())
         prompt, _ = env.reset()
         game.reset.assert_called_once_with(session=7)
         self.assertIn("search[keywords]", prompt)

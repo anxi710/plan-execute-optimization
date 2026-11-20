@@ -22,10 +22,10 @@ executor:
 environments:
   default_max_steps: 10
   alfworld:
-    instruction_path: toolkit/prompt/executor/instructions/alfworld_inst.txt
+    instruction_path: null
     max_steps: 30
   sciworld:
-    instruction_path: toolkit/prompt/executor/instructions/sciworld_inst.txt
+    instruction_path: null
     max_steps: null
     max_error_steps: 10
     simplification: easy
@@ -33,7 +33,7 @@ environments:
     server_step_limit: 200
     split: test
   webshop:
-    instruction_path: toolkit/prompt/executor/instructions/webshop_inst.txt
+    instruction_path: null
     max_steps: 15
     split: test
     catalog_path: null

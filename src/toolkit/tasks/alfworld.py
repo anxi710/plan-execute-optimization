@@ -26,6 +26,7 @@ class AlfWorldTask:
     observation: str
     gamefile: str
     plan: str | None = None
+    admissible_commands: list[str] | None = None
 
 
 def _source(path, split):
@@ -105,7 +106,10 @@ class AlfWorldRolloutSlot:
             raise ValueError(f"ALFWorld returned the wrong gamefile for task {task_id}")
         if _normalize(observation) != _normalize(canonical["task"]):
             raise ValueError(f"ALFWorld task text changed for task {task_id}")
-        return AlfWorldTask(canonical["id"], self.env, observation, returned, canonical.get("plan"))
+        return AlfWorldTask(
+            canonical["id"], self.env, observation, returned, canonical.get("plan"),
+            info["admissible_commands"][0].copy(),
+        )
 
 
 class AlfWorldRolloutPool:

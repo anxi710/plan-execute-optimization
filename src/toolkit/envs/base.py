@@ -4,8 +4,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from ..prompt.executor.plan_injection import PlanInjection
-from ..prompt.executor.template import render_executor_prompt
+from ..prompts import render_action_feedback, render_executor_prompt
 from ..rollout.state import State
 from ..utils.config import DEFAULT_CONFIG
 
@@ -22,10 +21,9 @@ class ActionResult:
 class BaseEnv(ABC):
     """Manage an Executor conversation for one already loaded task."""
 
-    def __init__(self, *, observation, plan, plan_placement, instruction,
+    def __init__(self, *, observation, instruction,
                  max_steps=DEFAULT_CONFIG["environments"]["default_max_steps"]):
         self._initial_observation = observation
-        self.plan_injection = PlanInjection(plan_placement, plan)
         self.instruction = instruction
         self.max_steps = max_steps
 
@@ -36,10 +34,19 @@ class BaseEnv(ABC):
 
     def reset(self):
         self.state = State(reward=0)
-        task = self.plan_injection.initial_task(self._initial_observation)
-        prompt = render_executor_prompt(self.instruction, task)
+        observation, _ = self._executor_feedback(self._initial_observation)
+        prompt = render_executor_prompt(self.instruction, observation)
         self.state.history = [{"role": "user", "content": prompt}]
         return prompt, self.state
+
+    def get_available_actions(self):
+        """Return native action candidates, or None for an open-ended interface."""
+        return None
+
+    def _executor_feedback(self, observation, *, terminal=False):
+        actions = None if terminal else self.get_available_actions()
+        feedback = observation if actions is None else render_action_feedback(observation, actions)
+        return feedback, actions
 
     @staticmethod
     def parse_action(reply):
@@ -59,11 +66,14 @@ class BaseEnv(ABC):
         else:
             result = self.execute_action(action)
         state.reward = result.reward
-        observation = f"Observation: {result.observation}"
-        state.action_trace.append({"action": action, "observation": observation, "valid": result.valid})
-        feedback = self.plan_injection.observation(observation)
-        state.history.append({"role": "user", "content": feedback})
         state.steps += 1
+        observation = f"Observation: {result.observation}"
+        feedback, actions = self._executor_feedback(observation, terminal=result.done)
+        event = {"action": action, "observation": observation, "valid": result.valid}
+        if actions is not None:
+            event["available_actions"] = list(actions)
+        state.action_trace.append(event)
+        state.history.append({"role": "user", "content": feedback})
         if result.done:
             state.finished = True
             state.success = result.success

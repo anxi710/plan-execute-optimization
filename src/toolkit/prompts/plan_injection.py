@@ -2,9 +2,7 @@
 
 from dataclasses import dataclass
 
-
-PLAN_HINT = "This plan may be helpful for you to complete the task:"
-THOUGHT_PLAN_HINT = "This plan may be helpful to complete the task:"
+from .frameworks import PLAN_HINT, THOUGHT_PLAN_HINT
 
 
 @dataclass(frozen=True)
@@ -27,19 +25,8 @@ class PlanInjection:
     def observation(self, observation_text):
         return self._append_plan(observation_text) if self.placement == "observation" else observation_text
 
-    def _thought_prefix(self):
+    @property
+    def thought_prefix(self):
         if self.placement == "thought" and self.plan:
             return f"{THOUGHT_PLAN_HINT}\n{self.plan}\nThought: "
         return None
-
-    def call_agent(self, agent, messages):
-        prefix = self._thought_prefix()
-        if prefix is not None:
-            return agent.continue_assistant(messages, prefix)
-        return agent(messages)
-
-    async def async_call_agent(self, agent, messages):
-        prefix = self._thought_prefix()
-        if prefix is not None:
-            return await agent.async_continue_assistant(messages, prefix)
-        return await agent.async_call(messages)

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .base import ActionResult, BaseEnv
-from ..prompt.executor.template import load_executor_instruction, resolve_executor_instruction_path
+from ..prompts import load_executor_instruction, resolve_executor_instruction_path
 from ..utils.config import DEFAULT_CONFIG
 
 
@@ -44,7 +44,7 @@ def open_sciworld_backend(jar_path=DEFAULTS["jar_path"], *,
 class SciWorldEnv(BaseEnv):
     """Apply ScienceWorld scoring, task identity checks and step limits."""
 
-    def __init__(self, task, env, *, plan_placement, instruction_path,
+    def __init__(self, task, env, *, instruction_path,
                  max_steps=DEFAULTS["max_steps"],
                  max_error_steps=DEFAULTS["max_error_steps"], simplification=DEFAULTS["simplification"]):
         if max_error_steps < 1:
@@ -59,8 +59,8 @@ class SciWorldEnv(BaseEnv):
         if type(max_steps) is not int or max_steps < 1:
             raise ValueError("ScienceWorld max_steps must be a positive integer")
         super().__init__(
-            observation=task.observation, plan=task.plan, plan_placement=plan_placement,
-            instruction=load_executor_instruction(instruction_path),
+            observation=task.observation,
+            instruction=load_executor_instruction("sciworld", instruction_path),
             max_steps=max_steps,
         )
 
@@ -73,6 +73,7 @@ class SciWorldEnv(BaseEnv):
         if description.split() != expected.split():
             raise ValueError(f"ScienceWorld task description differs for task {self.task.task_id}")
         self._initial_observation = f"{description}\n\nObservation: {observation}"
+        self._cache_available_actions(info)
         self.error_steps = 0
         observation, state = super().reset()
         state.reward = info["score"] / 100.0
@@ -80,12 +81,22 @@ class SciWorldEnv(BaseEnv):
 
     def execute_action(self, action):
         observation, _, done, info = self.env.step(action)
+        self._cache_available_actions(info)
         reward = info["score"] / 100.0
         return ActionResult(
             observation=observation, reward=reward,
             valid="No known action matches that input" not in observation,
             done=done, success=reward >= 1.0,
         )
+
+    def _cache_available_actions(self, info):
+        actions = info["valid"]
+        if not isinstance(actions, list) or any(not isinstance(action, str) for action in actions):
+            raise ValueError("ScienceWorld valid actions must be a list of strings")
+        self.available_actions = actions.copy()
+
+    def get_available_actions(self):
+        return self.available_actions
 
     def step(self, reply):
         feedback, state = super().step(reply)

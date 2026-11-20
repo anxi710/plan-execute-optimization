@@ -5,8 +5,7 @@ from toolkit.envs.base import ActionResult, BaseEnv
 
 class PartialRewardEnv(BaseEnv):
     def __init__(self):
-        super().__init__(observation="Room", plan="Check the table", plan_placement="observation",
-                         instruction="Choose one action", max_steps=2)
+        super().__init__(observation="Room", instruction="Choose one action", max_steps=2)
         self.actions = []
 
     def execute_action(self, action):
@@ -35,5 +34,5 @@ class BaseEnvTest(unittest.TestCase):
         self.assertFalse(state.success)
         self.assertEqual(state.reward, 0.5)
         self.assertEqual(state.terminate_reason, "environment_done")
-        self.assertIn("Check the table", feedback)
+        self.assertEqual(feedback, "Observation: Partially complete")
         self.assertEqual(state.action_trace[-1]["observation"], "Observation: Partially complete")

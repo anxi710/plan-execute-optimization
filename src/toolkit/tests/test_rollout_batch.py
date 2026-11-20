@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from toolkit.prompt.executor.plan_injection import PlanInjection
+from toolkit.envs.base import ActionResult, BaseEnv
 from toolkit.rollout.batch import RolloutJob, archive_incomplete_rollout, load_saved_rollout, run_rollouts, sample_jobs
 from toolkit.rollout.state import State
 from toolkit.utils.files import write_json
@@ -154,17 +154,12 @@ class RolloutBatchTest(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace()
             yield SimpleNamespace(load_task=load_task)
 
-        class Environment:
-            def __init__(self, task, *, plan_placement):
-                self.plan_injection = PlanInjection(plan_placement, task.plan)
-                self.state = State()
+        class Environment(BaseEnv):
+            def __init__(self, task):
+                super().__init__(observation="start", instruction="Choose an action.")
 
-            def reset(self):
-                return "start", self.state
-
-            def step(self, reply):
-                self.state.finished = self.state.success = True
-                return "done", self.state
+            def execute_action(self, action):
+                return ActionResult("done", reward=1, valid=True, done=True, success=True)
 
         with tempfile.TemporaryDirectory() as directory:
             jobs = [
