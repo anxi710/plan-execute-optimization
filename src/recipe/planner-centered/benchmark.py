@@ -7,6 +7,7 @@ import os
 import random
 import re
 from collections import Counter
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from time import monotonic
@@ -17,6 +18,7 @@ from run import (
     run_matched_trial, runtime_versions, save_trial, source_version, task_goal, utc_now,
 )
 from toolkit.agents.openai_agent import AsyncChatClient
+from toolkit.rollout.batch import sample_jobs
 from toolkit.tasks.alfworld import AlfWorldRolloutPool, load_alfworld_rows
 from toolkit.tasks.rows import task_rows_by_id
 from toolkit.utils.files import read_json, write_json, write_text_atomic
@@ -261,55 +263,52 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
     manifest.pop("interrupted_by", None)
     manifest.update(status="running", finished_at=None)
     write_json(manifest_path, manifest)
-    slots = asyncio.Semaphore(concurrency)
-
     async def one_trial(client, trial):
-        async with slots:
-            trial_id, model = trial["trial_id"], trial["model"]
-            path = run_dir / trial["file"]
-            attempt = len(trial["archived_attempts"]) + 1
-            if path.exists():
-                trace_suffix = "".join(path.suffixes)
-                archive = run_dir / "attempts" / trial_id / f"attempt-{attempt:06d}{trace_suffix}"
-                archive.parent.mkdir(parents=True, exist_ok=True)
-                if archive.exists():
-                    raise FileExistsError(archive)
-                path.rename(archive)
-                trial["archived_attempts"].append(str(archive.relative_to(run_dir)))
-                attempt += 1
-            trial.pop("error", None)
-            trial.update(status="running", started_at=utc_now(), finished_at=None,
-                         workspace_id=f"{manifest['run_id']}/{trial_id}/attempt-{attempt}")
-            identity = {"run_id": manifest["run_id"], "task_id": trial["task_id"], "trial_id": trial_id,
-                        "arm": trial["mode"], "model": model, "attempt": attempt}
+        trial_id, model = trial["trial_id"], trial["model"]
+        path = run_dir / trial["file"]
+        attempt = len(trial["archived_attempts"]) + 1
+        if path.exists():
+            trace_suffix = "".join(path.suffixes)
+            archive = run_dir / "attempts" / trial_id / f"attempt-{attempt:06d}{trace_suffix}"
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            if archive.exists():
+                raise FileExistsError(archive)
+            path.rename(archive)
+            trial["archived_attempts"].append(str(archive.relative_to(run_dir)))
+            attempt += 1
+        trial.pop("error", None)
+        trial.update(status="running", started_at=utc_now(), finished_at=None,
+                     workspace_id=f"{manifest['run_id']}/{trial_id}/attempt-{attempt}")
+        identity = {"run_id": manifest["run_id"], "task_id": trial["task_id"], "trial_id": trial_id,
+                    "arm": trial["mode"], "model": model, "attempt": attempt}
 
-            def checkpoint(record):
-                status = trial_status(record) if record.get("outcome") is not None else trial["status"]
-                finished_at = record["events"][-1]["timestamp"] if record.get("outcome") else trial["finished_at"]
-                save_trial(path, identity, {**record, "status": status, "started_at": trial["started_at"],
-                                            "finished_at": finished_at})
+        def checkpoint(record):
+            status = trial_status(record) if record.get("outcome") is not None else trial["status"]
+            finished_at = record["events"][-1]["timestamp"] if record.get("outcome") else trial["finished_at"]
+            save_trial(path, identity, {**record, "status": status, "started_at": trial["started_at"],
+                                        "finished_at": finished_at})
 
-            checkpoint({"mode": trial["mode"], "workspace_id": trial["workspace_id"], "events": [], "outcome": None})
-            try:
-                record = await run_one(
-                    rows[trial["task_id"]], client, mode=trial["mode"], workspace_id=trial["workspace_id"],
-                    model_settings=manifest["models"][model],
-                    max_input_bytes=manifest["budget"]["max_input_bytes_per_request"], save=checkpoint,
-                    executor_limit=trial["executor_limit"], planner_limit=trial["planner_limit"],
-                    return_every=trial["return_every"],
-                )
-                trial.update(status=trial_status(record), finished_at=record["events"][-1]["timestamp"])
-                if error := checkpoint_error(record, trial["status"]):
-                    trial["error"] = error
-                print(f"{trial_id}: {record['outcome']['reason']}", flush=True)
-            except asyncio.CancelledError:
-                trial.update(status="interrupted", finished_at=utc_now())
-                checkpoint(read_json(path))
-                raise
-            except Exception as error:
-                trial.update(status="error", error=type(error).__name__, finished_at=utc_now())
-                checkpoint({**read_json(path), "error": trial["error"]})
-                print(f"{trial_id}: {trial['error']}", flush=True)
+        checkpoint({"mode": trial["mode"], "workspace_id": trial["workspace_id"], "events": [], "outcome": None})
+        try:
+            record = await run_one(
+                rows[trial["task_id"]], client, mode=trial["mode"], workspace_id=trial["workspace_id"],
+                model_settings=manifest["models"][model],
+                max_input_bytes=manifest["budget"]["max_input_bytes_per_request"], save=checkpoint,
+                executor_limit=trial["executor_limit"], planner_limit=trial["planner_limit"],
+                return_every=trial["return_every"],
+            )
+            trial.update(status=trial_status(record), finished_at=record["events"][-1]["timestamp"])
+            if error := checkpoint_error(record, trial["status"]):
+                trial["error"] = error
+            print(f"{trial_id}: {record['outcome']['reason']}", flush=True)
+        except asyncio.CancelledError:
+            trial.update(status="interrupted", finished_at=utc_now())
+            checkpoint(read_json(path))
+            raise
+        except Exception as error:
+            trial.update(status="error", error=type(error).__name__, finished_at=utc_now())
+            checkpoint({**read_json(path), "error": trial["error"]})
+            print(f"{trial_id}: {trial['error']}", flush=True)
 
     transport = MODEL_SETTINGS["executor"]
     try:
@@ -317,9 +316,13 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
             async with AsyncChatClient(base_url=transport["base_url"], api_key=api_key, timeout=transport["timeout"],
                                        max_retries=0, max_concurrency=concurrency) as transport_client:
                 client = transport_client if unpaced else PacedClient(transport_client)
-                async with asyncio.TaskGroup() as group:
-                    for trial_id in pending:
-                        group.create_task(one_trial(client, trials[trial_id]))
+
+                @asynccontextmanager
+                async def open_worker():
+                    yield partial(one_trial, client)
+
+                await sample_jobs([trials[trial_id] for trial_id in pending],
+                                  open_worker=open_worker, concurrency=concurrency)
     except (Exception, asyncio.CancelledError, KeyboardInterrupt) as error:
         manifest.update(status="interrupted", interrupted_by=type(error).__name__)
         raise
