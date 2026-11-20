@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="依据当前代码查看 EO、PE-S、PE-D 和 PC 的协议、字段与实际交付路径。">
+<title>四种规划框架 · 协议审查</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #181825; --panel: #1e1e2e; --inset: #141420;
+    --text: #edf0ff; --muted: #b9c1da; --line: #3b3d55;
+    --planner: #cbb5fa; --executor: #9fc6fc; --return: #f2c781;
+    --verifier: #a2dfb5; --fail: #ffb4bd;
+    --mono: "IBM Plex Mono", "Maple Mono NF CN", ui-monospace, monospace;
+    --font-size-base: 16px; --foreground: var(--text); --background: var(--page);
+    --border: var(--line); --muted-foreground: var(--muted); --viz-series-1: var(--executor);
+    font: 16px/1.6 "Source Sans 3", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--page); color: var(--text);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  a { color: var(--planner); text-decoration-thickness: 1px; text-underline-offset: .22em; }
+  a:hover { color: var(--text); }
+  :focus-visible { outline: 2px solid var(--planner); outline-offset: 3px; }
+  ::selection { background: #51466b; color: var(--text); }
+  .wrap { width: min(1200px, calc(100% - 5rem)); margin-inline: auto; }
+  .masthead { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 3.8rem; }
+  .page-header { border-bottom: 1px solid var(--line); }
+  .page-header nav { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; }
+  .page-header a { text-decoration: none; color: var(--muted); }
+  .page-header a:hover { color: var(--text); text-decoration: underline; }
+  .skip { position: absolute; top: -5rem; left: 1rem; }
+  .skip:focus { top: .5rem; z-index: 3; background: var(--inset); padding: .7rem; }
+  h1, h2, h3 { margin: 0; line-height: 1.25; font-weight: 730; letter-spacing: -.025em; }
+  h1 { font-size: 2.78rem; text-wrap: balance; }
+  h2 { font-size: 1.65rem; }
+  h3 { font-size: 1.25rem; }
+  .text-small { font-size: .88rem; }
+  .text-muted { color: var(--muted); }
+  button { font: inherit; cursor: pointer; }
+  .btn { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: .4rem; padding: .5rem .85rem; text-align: left; min-height: 44px; }
+  .btn:hover { background: var(--inset); color: var(--text); }
+  .btn[aria-pressed="true"] { border-color: var(--planner); color: var(--planner); background: #302a48; }
+  .mode-nav .btn { min-width: 4.7rem; font-family: var(--mono); text-align: center; font-weight: 650; }
+  .topic-nav .btn { border-color: transparent; }
+  .topic-nav .btn[aria-pressed="true"] { border-color: var(--line); }
+  .table-responsive { overflow-x: auto; border-block: 1px solid var(--line); }
+  .table { border-collapse: collapse; text-align: left; font-size: .93rem; }
+  .table th, .table td { padding: .72rem .75rem; border-bottom: 1px solid var(--line); }
+  .table thead th { font-size: .84rem; color: var(--muted); background: var(--panel); }
+  .table tbody tr:last-child > * { border-bottom: 0; }
+  summary { cursor: pointer; color: var(--planner); padding: .2rem 0; }
+  summary:hover { color: var(--text); }
+  summary::marker { color: var(--planner); }
+  pre { background: var(--inset); color: var(--text); border: 1px solid var(--line); border-radius: .4rem; padding: .85rem; font: .85rem/1.65 var(--mono); }
+  footer { border-top: 1px solid var(--line); padding: 1.4rem 0 2.5rem; color: var(--muted); font-size: .88rem; }
+  .noscript { padding: 1rem; background: var(--panel); border: 1px solid var(--line); }
+  @media (max-width: 875px) { .wrap { width: calc(100% - 2.5rem); } }
+  @media (max-width: 520px) {
+    .wrap { width: calc(100% - 1.5rem); }
+    .masthead { display: block; padding: .65rem 0; }
+    .page-header nav { margin-top: .35rem; }
+    h1 { font-size: 2rem; }
+  }
+</style>
+<style>
+  #protocol-review { --review-tight: calc(var(--font-size-base) * .5); --review-gap: calc(var(--font-size-base) * 1.25); --review-section: calc(var(--font-size-base) * 2); display: grid; gap: var(--review-gap); color: var(--foreground); min-width: 0; }
+  #protocol-review [hidden], #protocol-review .review-panel[hidden], #protocol-review #architecture-controls[hidden] { display: none; }
+  #protocol-review { padding-block: 2.25rem; }
+  #protocol-review .review-header { display: grid; gap: var(--review-tight); }
+  #protocol-review .mode-nav { display: flex; flex-wrap: wrap; gap: var(--review-tight); }
+  #protocol-review .workspace { display: grid; grid-template-columns: 138px minmax(0, 1fr); gap: var(--review-section); align-items: start; min-width: 0; }
+  #protocol-review .topic-nav { display: grid; gap: var(--review-gap); }
+  #protocol-review .topic-group { display: grid; gap: var(--review-tight); }
+  #protocol-review .topic-group + .topic-group { border-top: 1px solid var(--line); padding-top: var(--review-gap); }
+  #protocol-review .topic-label { color: var(--muted); font-size: .88rem; }
+  #protocol-review #architecture-controls { margin-bottom: var(--review-gap); }
+  #protocol-review .review-panel, #protocol-review .section { display: grid; gap: var(--review-gap); min-width: 0; }
+  #protocol-review .panel-heading { display: grid; gap: var(--review-tight); }
+  #protocol-review .diagram { width: 100%; min-width: 0; }
+  #protocol-review .diagram svg { display: block; width: 100%; }
+  #protocol-review .diagram text { fill: var(--foreground); }
+  #protocol-review .diagram .record { stroke: var(--border); fill: var(--panel); stroke-width: 1; }
+  #protocol-review .diagram .delivered { fill: color-mix(in srgb, var(--executor) 8%, var(--panel)); }
+  #protocol-review .diagram .edge { stroke: var(--muted-foreground); stroke-width: 1.25; fill: none; }
+  #protocol-review .diagram .data-label { font-family: ui-monospace, monospace; }
+  #protocol-review .diagram .role-label { fill: var(--muted-foreground); }
+  #protocol-review .diagram .node-heading { font-weight: 500; }
+  #protocol-review pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  #protocol-review .raw, #protocol-review .diagram .data-label { font-family: var(--mono); }
+  #protocol-review .table-responsive { min-width: 0; }
+  #protocol-review table { width: 100%; }
+  #protocol-review th, #protocol-review td { vertical-align: top; overflow-wrap: anywhere; }
+  #protocol-review .cell-label { display: none; }
+  #protocol-review details { min-width: 0; }
+  #protocol-review details > summary { font-weight: 500; overflow-wrap: anywhere; }
+  #protocol-review details > .section { margin-top: var(--review-gap); }
+  #protocol-review .section > h3:not(:first-child) { margin-top: var(--review-gap); }
+  @media (max-width: 950px) {
+    #protocol-review .workspace { grid-template-columns: minmax(0, 1fr); gap: var(--review-gap); }
+    #protocol-review .topic-group { display: flex; flex-wrap: wrap; }
+    #protocol-review .topic-label { flex-basis: 100%; }
+  }
+  @media (max-width: 600px) {
+    #protocol-review .review-header { padding-inline-end: 0; }
+    #protocol-review .stack-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    #protocol-review .stack-table, #protocol-review .stack-table tbody { display: block; }
+    #protocol-review .stack-table tr { display: grid; gap: var(--review-tight); padding-block: var(--review-gap); border-bottom: 1px solid var(--border); }
+    #protocol-review .stack-table td { display: block; padding: 0; border: 0; }
+    #protocol-review .stack-table td:first-child { font-weight: 500; }
+    #protocol-review .stack-table td:not(:first-child) .cell-label { display: block; color: var(--muted-foreground); margin-bottom: calc(var(--font-size-base) * .2); }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#protocol-review">跳至协议审查</a>
+<header class="page-header"><div class="wrap masthead">
+  <strong>Planner 实验 · 协议审查</strong>
+  <nav aria-label="页面目录">
+    <a href="#pc/delivery">交付关系</a>
+    <a href="#reference">字段与原文</a>
+    <a href="#issues">待审查点</a>
+    <a href="audit.html">运行审查</a>
+  </nav>
+</div></header>
+<div id="protocol-review" class="wrap">
+  <header class="review-header">
+    <h1>四框架协议审查</h1>
+    <span>核对 Planner 生成、运行器保存与 Executor 接收的内容。</span>
+    <span class="text-small text-muted">当前工作区源码 · 基线 992311a · 2026-11-20</span>
+  </header>
+  <input id="protocol-mode" type="hidden" value="pc">
+  <noscript><p class="noscript">此页需要 JavaScript 展示字段与交付图。请在浏览器中允许 JavaScript 后重新打开。</p></noscript>
+  <div class="workspace">
+    <nav class="topic-nav" aria-label="选择审查主题">
+      <div class="topic-group" role="group" aria-labelledby="architecture-nav-label">
+        <span class="topic-label" id="architecture-nav-label">架构协议</span>
+        <button class="btn" type="button" data-view="delivery" aria-controls="view-delivery" aria-pressed="true">交付关系</button>
+        <button class="btn" type="button" data-view="planner" aria-controls="view-planner" aria-pressed="false">Planner 协议</button>
+        <button class="btn" type="button" data-view="executor" aria-controls="view-executor" aria-pressed="false">Executor 协议</button>
+      </div>
+      <div class="topic-group" role="group" aria-labelledby="shared-nav-label">
+        <span class="topic-label" id="shared-nav-label">共用与对照</span>
+        <button class="btn" type="button" data-view="boundaries" aria-controls="view-boundaries" aria-pressed="false">返回与停止</button>
+        <button class="btn" type="button" data-view="reference" aria-controls="view-reference" aria-pressed="false">字段与原文</button>
+        <button class="btn" type="button" data-view="compare" aria-controls="view-compare" aria-pressed="false">架构对比</button>
+        <button class="btn" type="button" data-view="issues" aria-controls="view-issues" aria-pressed="false">待审查点</button>
+      </div>
+    </nav>
+    <main>
+      <div id="architecture-controls">
+        <nav class="mode-nav" aria-label="选择运行架构">
+          <button class="btn" type="button" data-mode="eo" aria-pressed="false">EO</button>
+          <button class="btn" type="button" data-mode="pe-s" aria-pressed="false">PE-S</button>
+          <button class="btn" type="button" data-mode="pe-d" aria-pressed="false">PE-D</button>
+          <button class="btn" type="button" data-mode="pc" aria-pressed="true">PC</button>
+        </nav>
+      </div>
+      <section class="review-panel" id="view-delivery" data-panel="delivery" aria-label="交付关系">
+        <div class="panel-heading">
+          <h2 id="mode-heading">PC · 输出与交付分流</h2>
+          <span id="mode-caption">阶段目标由 Planner 提供；独立的完整计划只保留在 Planner 一侧。</span>
+        </div>
+        <div id="mode-flow" class="diagram" role="group" aria-label="当前架构的字段交付路径"></div>
+        <details>
+          <summary>逐项查看字段去向</summary>
+          <div id="mode-routes" class="section"></div>
+        </details>
+      </section>
+      <section class="review-panel" id="view-planner" data-panel="planner" aria-label="Planner 协议" hidden>
+        <h2>Planner 生成什么</h2>
+        <div id="mode-fields"></div>
+        <details open><summary>模型实际接收</summary><div class="section"><pre id="planner-input" class="raw"></pre></div></details>
+        <details open><summary>回复形状（占位示意）</summary><div class="section"><pre id="planner-output" class="raw"></pre></div></details>
+        <h3>解析器实际检查</h3>
+        <div id="parser-rules"></div>
+      </section>
+      <section class="review-panel" id="view-executor" data-panel="executor" aria-label="Executor 协议" hidden>
+        <h2>Executor 接收什么</h2>
+        <details><summary>所有架构共有的初态</summary><div class="section"><pre class="raw">user: 环境 Executor 指令 + 原任务与初态
+      + 当前原生动作候选（Terminal 无有限列表）
+      + Hard constraints for the entire task</pre></div></details>
+        <h3>所选架构的控制消息</h3>
+        <pre id="executor-delivery" class="raw"></pre>
+        <div id="executor-rules"></div>
+        <details><summary>每个执行轮的固定过程</summary><div class="section"><pre class="raw">executor(state.history) → 回复 text
+assistant: 回复原文（可有 Thought，须恰好一行非空 Action: ...）
+env.step(text) → 解析并执行动作
+user: Observation: 原始观察 + 当前动作候选（非终局）
+
+同一 state.history 持续追加，旧指导和旧阶段消息仍保留。</pre></div></details>
+      </section>
+      <section class="review-panel" id="view-boundaries" data-panel="boundaries" aria-label="返回与停止" hidden>
+        <h2>什么时候交还控制权</h2>
+        <pre class="raw">executor_attempts % return_every == 0
+→ 记录 execution_feedback(return_reason="budget_pause")
+→ EO / PE-S：继续 Executor，不调用 Planner
+→ PE-D / PC：有 Planner 额度则调用，否则停止</pre>
+        <div id="stage-boundary-facts"></div>
+        <h3>每步后的判断顺序</h3>
+        <div id="stop-order"></div>
+        <details><summary>全局停止、异常与最终评分</summary><div class="section" id="outcome-rules"></div></details>
+      </section>
+      <section class="review-panel" id="view-reference" data-panel="reference" aria-label="字段与原文" hidden>
+        <h2>字段、模板与源码</h2>
+        <details><summary>全部字段字典</summary><div class="section" id="field-dictionary"></div></details>
+        <details><summary>当前提示词原文（19 个常量）</summary><div class="section" id="literal-prompts"></div></details>
+        <details><summary>环境动作与整任务结束协议</summary><div class="section" id="backend-rules"></div></details>
+        <details><summary>另一执行入口：固定计划 RolloutRunner</summary><div class="section"><pre class="raw">RolloutRunner.run(row, plan, save)
+→ 调用方预先给出 plan，本入口不调用 Planner
+→ PlanInjection("query")：初态消息追加计划
+→ PlanInjection("observation")：每次环境反馈追加计划
+→ PlanInjection("thought")：助手续写前缀包含计划
+→ plan=None：无计划执行
+
+run_framework(mode="pe-s")
+→ 在线调用一次 Planner
+→ 计划作为独立 user 指导消息追加
+→ 未使用 PlanInjection
+
+两者共用 RolloutSession；计划来源和注入位置并不相同。</pre></div></details>
+        <details><summary>源码定位</summary><div class="section" id="source-index"></div></details>
+      </section>
+      <section class="review-panel" id="view-compare" data-panel="compare" aria-label="架构对比" hidden>
+        <h2>当前四架构的协议差别</h2>
+        <div id="comparison-table"></div>
+        <span>PE-D sub-plan：没有独立配置或 plan_scope。短计划能通过非空检查，但不等于已实现该变体。</span>
+      </section>
+      <section class="review-panel" id="view-issues" data-panel="issues" aria-label="待审查点" hidden>
+        <h2>待你审查的协议选择</h2>
+        <span class="text-small text-muted">P1–P14 仅作讨论编号，不表示优先级。</span>
+        <div id="review-points"></div>
+      </section>
+    </main>
+  </div>
+<script type="application/json" id="protocol-prompt-data">[["alfworld.py · ALFWORLD_PLANNER_TEMPLATE", "Generate a high-level global plan for the household task:\n\u003ctask>\n{task}\n\u003c/task>\n\nOrganize the work into abstract subgoals and their dependencies.\nIdentify what must be learned or established before each subgoal, and how to adjust the route if an assumption fails.\nGround the plan in the task and supplied observations. Do not assume unobserved objects or conditions.\nLeave concrete environment commands and local execution choices to the Executor.\n\nFormat your plan as follows:\n\u003cplan>\nStep 1: ...\nStep 2: ...\n...\n\u003c/plan>"], ["alfworld.py · ALFWORLD_EXECUTOR_TEMPLATE", "Complete the household task using the observations and current Available actions supplied by the environment.\nChoose the next action from the current list. Use new feedback to adjust local execution while preserving the task goal and constraints.\n\nWrite exactly one nonempty Action: \u003ccommand> line per turn.\nYou may include a brief Thought: line before it. Thought is reasoning text, not an environment command."], ["sciworld.py · SCIWORLD_PLANNER_TEMPLATE", "Generate a high-level global plan for the scientific task:\n\u003ctask>\n{task}\n\u003c/task>\n\nOrganize the experiment into abstract subgoals, required conditions, and evidence to obtain.\nExplain the dependencies between preparation, investigation, and checking the result.\nGround the plan in the task and supplied observations. Keep unverified assumptions separate from known facts.\nLeave concrete environment commands and local execution choices to the Executor.\n\nFormat your plan as follows:\n\u003cplan>\nStep 1: ...\nStep 2: ...\n...\n\u003c/plan>"], ["sciworld.py · SCIWORLD_EXECUTOR_TEMPLATE", "Complete the scientific task using the observations and current Available actions supplied by the environment.\nChoose the next action from the current list. Use experimental observations to adjust local execution while preserving the task goal and constraints.\n\nWrite exactly one nonempty Action: \u003ccommand> line per turn.\nYou may include a brief Thought: line before it. Thought is reasoning text, not an environment command."], ["webshop.py · WEBSHOP_PLANNER_TEMPLATE", "Generate a high-level global plan for the shopping task:\n\u003ctask>\n{task}\n\u003c/task>\n\nOrganize the work into abstract subgoals for finding candidates, verifying requirements, and choosing a suitable item.\nIdentify the evidence needed for each requirement and what to reconsider if no candidate fits.\nDo not assume a particular product ID or option before inspecting the page.\nLeave concrete page interactions and local execution choices to the Executor.\n\nFormat your plan as follows:\n\u003cplan>\nStep 1: ...\nStep 2: ...\n...\n\u003c/plan>"], ["webshop.py · WEBSHOP_EXECUTOR_TEMPLATE", "Complete the shopping task using the observations and current Available actions supplied by the environment.\nChoose an interaction from the current page's list. Replace a keywords placeholder with a task-relevant query.\nVerify product requirements before purchasing. An available interaction does not guarantee that the item meets the goal.\n\nWrite exactly one nonempty Action: \u003ccommand> line per turn.\nYou may include a brief Thought: line before it. Thought is reasoning text, not an environment command."], ["terminalbench.py · TERMINALBENCH_PLANNER_TEMPLATE", "Generate a high-level global plan for the reviewed Terminal-Bench task:\n\u003ctask>\n{task}\n\u003c/task>\n\nUse only the supplied task inputs and local workspace.\nOrganize the work into abstract subgoals for inspecting inputs, producing the required output, and checking the result.\nIdentify prerequisites, evidence to obtain, and alternatives if an assumption fails.\nDo not change the verifier or assume access to hidden tests. Leave concrete commands and local execution choices to the Executor.\n\nFormat your plan as follows:\n\u003cplan>\nStep 1: ...\nStep 2: ...\n...\n\u003c/plan>"], ["terminalbench.py · TERMINALBENCH_EXECUTOR_TEMPLATE", "You are the Executor for this Terminal-Bench task.\nReturn one Action line per turn. Action: \u003cone shell command> runs a command in /app.\nUse Action: finish when the complete task is ready for independent verification.\nYou can inspect local inputs, create task artifacts, and check your work.\nFiles persist across turns. Each command starts in /app."], ["frameworks.py · PLAN_HINT", "This plan may be helpful for you to complete the task:"], ["frameworks.py · THOUGHT_PLAN_HINT", "This plan may be helpful to complete the task:"], ["frameworks.py · HARD_CONSTRAINTS_TEMPLATE", "\n\nHard constraints for the entire task:\n{constraints}"], ["frameworks.py · PLANNER_TASK_REQUIREMENTS_TEMPLATE", "{prompt}\n\nTask requirements:\n{context}"], ["frameworks.py · PE_D_CONTROL_TEMPLATE", "Set decision to \"guide\". The Executor owns the entire task. Give advisory full-plan guidance and leave stage_objective and soft_guidance out of the JSON object."], ["frameworks.py · PC_CONTROL_TEMPLATE", "Set decision to \"delegate\" when work remains. In that same JSON object, the string stage_objective is required and soft_guidance is optional. The Executor receives only the current stage and chooses its own actions. Use this JSON shape for delegation, with a concrete objective and values grounded in the current task:\n{\"decision\":\"delegate\",\"stage_objective\":\"\u003cnext observable subgoal>\",\"soft_guidance\":\"\",\"hypotheses\":[],\"remaining_work\":[],\"evidence_refs\":[]}\nIf you recommend ending the entire task, set decision to \"finish\" and omit stage_objective and soft_guidance."], ["frameworks.py · PC_TERMINAL_CONTROL_TEMPLATE", "The environment reached a native terminal state. Set decision to \"finish\", cite the relevant public observations, and omit the stage fields and plan."], ["frameworks.py · PLANNER_DECISION_TEMPLATE", "Keep a complete plan for all remaining task work in \u003cplan>...\u003c/plan>. Separate unverified hypotheses from observations. Cite observations by their supplied event_id. After the plan, output \u003cdecision> and \u003c/decision> around a single JSON object. The common JSON fields are decision, hypotheses (array of strings), remaining_work (array of strings), and evidence_refs (array of event IDs). Add the decision-specific fields listed below. A finish decision can omit \u003cplan>.\n{control}"], ["frameworks.py · PLANNER_CONTEXT_TEMPLATE", "{prompt}\n\n{protocol}\n\n{context}"], ["frameworks.py · DELEGATED_STAGE_TEMPLATE", "Current delegated stage. This supersedes prior stages. Choose actions autonomously within the stage objective, and keep the original task and hard constraints. Treat soft guidance as advice.\n{request}"], ["frameworks.py · PLAN_GUIDANCE_TEMPLATE", "Continue to own the entire original task. The latest guidance supersedes earlier guidance.\n{plan_hint}\n{guidance}"]]</script>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('protocol-review');
+  const el = id => root.querySelector('#' + id);
+  const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const table = (headers, rows) => '<div class="table-responsive"><table class="table table-sm stack-table"><thead><tr>' + headers.map(x => '<th>' + esc(x) + '</th>').join('') + '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map((x,index) => '<td><span class="cell-label text-small" aria-hidden="true">' + esc(headers[index] || '') + '</span>' + esc(x) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  const section = (title, headers, rows) => '<h3>' + esc(title.replace(/^[A-F] · /, '')) + '</h3>' + table(headers, rows);
+  const commonInput = {
+    planner_state: {
+      goal: '[调用方原始目标]', constraints: ['[硬约束]'],
+      global_plan: '[上一次解析的 <plan> 文本；初次为 null]',
+      hypotheses: ['[上次 Planner 假设]'], remaining_work: ['[上次 Planner 剩余工作]'],
+      evidence_refs: [1], observed_facts: [{event_id: 1, observation: '[初态或已执行动作的原始公开观察]'}]
+    },
+    feedback: {
+      observed_changes: [{event_id: '[工具事件 ID]', action: '[已执行动作]', observation: '[原始公开观察]'}],
+      executor_claims: [{event_id: '[同一工具事件 ID]', text: '[首个 Action: 行之前的原文]'}]
+    }
+  };
+  const decision = kind => ({decision:kind, ...(kind === 'delegate' ? {stage_objective:'[Planner 生成的当前阶段目标]', soft_guidance:'[可选提示；可省略]'} : {}), hypotheses:[], remaining_work:[], evidence_refs:[1]});
+  const commonFields = [
+    ['goal / constraints', '调用方 → Planner 状态', '每轮 Planner；PC 同时交付原目标与硬约束；所有 Executor 初态已有任务和硬约束'],
+    ['observed_facts', '运行器累计初态与全部工具观察', '每轮重建给 Planner；不是模型提炼的事实摘要'],
+    ['feedback.observed_changes', '上次返回以来的工具事件', '每项含 event_id、action、observation；不含动作候选'],
+    ['feedback.executor_claims', 'Executor 首个 Action 行前的文字', '来源单列；未验证陈述真实性'],
+    ['hypotheses / remaining_work', 'Planner 输出的字符串数组', '替换状态，下轮 Planner 可见；不直接交付 Executor'],
+    ['evidence_refs', 'Planner 选择的公开观察 ID', '严格整数，须已存在；去重；PC 进一步解引用成观察文本'],
+    ['request_id / plan_version', '运行器生成', '仅状态与日志；不写入模型 prompt']
+  ];
+  const modes = {
+    eo: {
+      title:'EO · 没有外部规划交付',
+      nodes:[['task','任务与初态','原始任务 · 硬约束'],['history','Executor 会话','持续 Thought / Action'],['env','环境反馈','原始观察 · 当前动作候选']],
+      routes:[['外部 Planner','不调用','无 Planner 输出或状态交付'],['execution_request','记录整任务请求','没有追加规划消息；初态仍含任务和硬约束'],['返回边界','仅记录分段反馈','不会因此调用 Planner']],
+      fields:[['计划 / decision','无','无'],['目标与硬约束','初态 prompt','Executor 全程保留'],['模型反馈','原始动作观察 + 动作候选','持续追加到同一会话']],
+      input:'不调用 Planner。', output:'无 Planner 回复。',
+      parser:[['Planner 协议','无'],['Executor 协议','恰好一行非空 Action: ...；Thought 可选']],
+      delivery:'无新增规划消息。execution_request 仅记日志。',
+      extra:[['原生规划','Executor 可以自行推理、探索、选择动作和纠错。']]
+    },
+    'pe-s': {
+      title:'PE-S · 一次计划交付，持续执行',
+      nodes:[['plan','Planner 一次回复','整体计划文本'],['state','运行器提取 / 保存','global_plan ← plan'],['history','Executor 会话','独立 user 消息追加整份计划']],
+      routes:[['<plan> 文本或整段回复','extract_plan()','保存 global_plan，同时交付 Executor'],['后续工具反馈','同一 Executor 会话','不再调用 Planner'],['hypotheses / remaining_work / evidence_refs','运行器设为空数组','PE-S 不解析这些 JSON 字段']],
+      fields:[['plan','整体计划文本','状态 global_plan + Executor 的指导消息'],['decision','运行器内部设 guide','模型无需输出 decision JSON'],['soft_guidance（日志字段）','运行器填入整份计划','字段名是 soft_guidance，但值是完整计划']],
+      input:'一条 user 消息：环境 Planner 模板（global plan）\n+ 初始公开观察\n+ Task requirements:\n' + JSON.stringify({goal:'[原始目标]', hard_constraints:['[硬约束]']}, null, 2),
+      output:'<plan>\n[整体高层计划]\n</plan>\n\n或：无标签的非空纯文本；解析器会将整段文本作为计划。',
+      parser:[['通用拒绝','空回复；finish_reason="length"'],['有 <plan>','提取首个标签正文，忽略标签外文字；标签不区分大小写'],['无 <plan>','将整段回复去首尾空白后作为计划'],['不校验','Step 格式、计划覆盖、语义、JSON 结构']],
+      delivery:'user:\nContinue to own the entire original task. The latest guidance supersedes earlier guidance.\nThis plan may be helpful for you to complete the task:\n[提取后的整份计划]',
+      extra:[['交付次数','仅一次。旧计划持续留在 Executor 历史。'],['执行职责','Executor 全程承担整项任务，可根据现场观察调整具体执行。']]
+    },
+    'pe-d': {
+      title:'PE-D · 更新整项任务的整体指导',
+      nodes:[['plan','Planner 每轮回复','<plan> + guide JSON'],['state','运行器更新状态','global_plan ← 最新 plan'],['history','Executor 同一会话','追加最新完整计划；旧指导仍在']],
+      routes:[['<plan>','global_plan + 日志 soft_guidance','整份文本交付 Executor'],['hypotheses / remaining_work','替换 Planner 状态','下轮 Planner 可见，不直接交付 Executor'],['evidence_refs','保存 / 校验公开 ID','无独立证据包交付 Executor'],['stage_objective / soft_guidance（若模型多写）','PE-D 不校验这些字段','不使用；prompt 要求省略它们']],
+      fields:[['<plan>','必需非空；prompt 要求完整剩余计划','global_plan + Executor 整任务指导'],['decision','必需，且只能为 guide','继续执行；PE-D Planner 不能输出 finish'],['hypotheses / remaining_work','必需字符串数组','替换状态并回传下轮 Planner'],['evidence_refs','必需公开观察整数 ID 数组','保存与去重，不生成独立交付证据包'],['soft_guidance（日志字段）','运行器填入整份计划','不是模型 JSON 中同名字段的值']],
+      input:'每次重新构造一条 user 消息：\n环境 Planner 模板（global plan）+ 动态协议 + 以下 JSON\n初次 global_plan=null，三个 Planner 数组为空，feedback=null。\n\n' + JSON.stringify(commonInput, null, 2),
+      output:'<plan>\n[覆盖全部剩余工作的高层计划；prompt 要求]\n</plan>\n<decision>\n' + JSON.stringify(decision('guide'), null, 2) + '\n</decision>',
+      parser:[['decision','只允许 guide'],['计划','要求非空 <plan>；不验证完整覆盖或 Step 格式'],['三个公共数组','hypotheses / remaining_work 为字符串数组；evidence_refs 为已知整数 ID 数组'],['额外阶段字段','prompt 要求省略，但解析器不会拒绝；即使输出也不交付'],['下一轮输入','上轮计划与数组 + 累计观察 + 最新分段反馈；不是 Planner 原始聊天历史']],
+      delivery:'每次初始/边界调用后追加 user:\nContinue to own the entire original task. The latest guidance supersedes earlier guidance.\nThis plan may be helpful for you to complete the task:\n[提取后的最新整份计划]',
+      extra:[['返回条件','累计 Executor 调用数对 return_every 取模为 0。不是任务或子目标达成。'],['执行职责','同一个整任务 request_id，任务归属不随指导更新而改变。']]
+    },
+    pc: {
+      title:'PC · 输出与交付分流',
+      nodes:[['plan','Planner 同一回复','<plan> + delegate JSON'],['state','运行器分流','整体计划存状态；阶段字段组装请求'],['history','Executor 同一会话','当前阶段目标 + soft_guidance + 证据']],
+      routes:[['<plan> 完整剩余计划','planner_state.global_plan','只存日志并回传下轮 Planner；不交付 Executor'],['stage_objective','execution_request.stage_objective','交付 Executor；来源确实是 Planner'],['soft_guidance','execution_request.soft_guidance','交付 Executor；可省略，默认空字符串'],['evidence_refs','按公开 ID 取 observation','以 evidence:[{event_id, observation}] 交付'],['hypotheses / remaining_work','替换 Planner 状态','下轮 Planner 可见，不直接交付 Executor']],
+      fields:[['<plan>','delegate 必需非空；prompt 要求完整剩余计划','global_plan；不进入 Executor 阶段请求'],['stage_objective','delegate 必需非空字符串','去首尾空白后交付当前阶段请求'],['soft_guidance','delegate 可选字符串，默认空','去首尾空白后作为独立建议交付'],['decision','非终局 delegate / finish；终局仅 finish','delegate 创建新阶段；finish 停止整任务'],['hypotheses / remaining_work','含 finish 在内始终必需字符串数组','替换状态；finish 不检查 remaining_work 必须为空'],['evidence_refs','始终必需公开观察整数 ID 数组','状态保存；delegate 时解引用并交付 Executor']],
+      input:'每次重新构造一条 user 消息：\n环境 Planner 模板（global plan）+ 动态协议 + 以下 JSON\n初次 global_plan=null，三个 Planner 数组为空，feedback=null。\n\n' + JSON.stringify(commonInput, null, 2),
+      output:'<plan>\n[完整剩余计划；独立于 stage_objective]\n</plan>\n<decision>\n' + JSON.stringify(decision('delegate'), null, 2) + '\n</decision>\n\n结束建议：\n<decision>\n' + JSON.stringify(decision('finish'), null, 2) + '\n</decision>',
+      parser:[['delegate','必须同时有非空 <plan> 和非空 stage_objective'],['soft_guidance','可省略；提供时须为字符串'],['finish','先校验公共数组与证据，再直接返回；多写的 plan / 阶段字段会被忽略'],['计划语义','不检查全局计划、阶段目标与 soft_guidance 是否一致'],['字段来源','stage_objective 是 Planner 输出；运行器不自行推导或生成阶段目标']],
+      delivery:'user:\nCurrent delegated stage. This supersedes prior stages. Choose actions autonomously within the stage objective, and keep the original task and hard constraints. Treat soft guidance as advice.\n\n' + JSON.stringify({goal:'[原始目标]', stage_objective:'[Planner 的阶段目标]', hard_constraints:['[原始硬约束]'], soft_guidance:'[Planner 可选提示]', evidence:[{event_id:1, observation:'[选中的公开观察]'}]}, null, 2) + '\n\n不包含 <plan> / global_plan / hypotheses / remaining_work。',
+      extra:[['阶段上下文','原始任务、旧阶段请求与已执行历史均保留；新消息只声明 supersedes。'],['阶段结束','没有独立完成判定或返回动作；按固定轮数再调用 Planner。'],['非终局 finish','可直接停止整任务，不要求阶段完成证明。'],['原生终局后','若 Planner 额度尚有剩余，还会调用一次收尾 Planner；此时不能重开环境或改评分。']]
+    }
+  };
+  const graphRows = {
+    eo: [[
+      ['任务', ['原始任务', '初态与硬约束']],
+      ['Executor 会话', ['Thought / Action', 'state.history']],
+      ['环境', ['原始观察', '当前动作候选']]
+    ]],
+    'pe-s': [[
+      ['整体计划', ['<plan> 或纯文本']],
+      ['提取并保存', ['global_plan', '整任务指导消息']],
+      ['Executor', ['整份计划', '持续完成整项任务']]
+    ]],
+    'pe-d': [
+      [
+        ['最新完整计划', ['<plan>']],
+        ['更新与交付', ['global_plan', '整任务指导消息']],
+        ['Executor', ['整份计划', '原任务继续执行']]
+      ],
+      [
+        ['状态与证据', ['hypotheses', 'remaining_work', 'evidence_refs']],
+        ['Planner 状态', ['替换上轮字段', '累计公开观察']],
+        ['下一轮 Planner', ['不直接交付 Executor']]
+      ]
+    ],
+    pc: [
+      [
+        ['完整剩余计划', ['<plan>']],
+        ['Planner 状态', ['global_plan']],
+        ['下一轮 Planner', ['不交付 Executor']]
+      ],
+      [
+        ['阶段输出', ['stage_objective', 'soft_guidance', 'evidence_refs']],
+        ['当前执行请求', ['stage_objective', 'soft_guidance', 'evidence']],
+        ['Executor', ['当前阶段目标', '提示与所选证据']]
+      ]
+    ]
+  };
+  const captions = {
+    eo:'Executor 直接接收任务并与环境交互，没有外部 Planner。',
+    'pe-s':'一次生成整体计划，整份计划交给 Executor，之后不再调用 Planner。',
+    'pe-d':'最新完整计划交给 Executor；假设、剩余工作与引用保留在 Planner 状态中。',
+    pc:'阶段目标由 Planner 提供；独立的完整计划只保留在 Planner 一侧。'
+  };
+  let currentMode = 'pc';
+  let currentView = 'delivery';
+  const validMode = value => Object.prototype.hasOwnProperty.call(modes, value);
+  const architectureViews = ['delivery','planner','executor'];
+  const views = ['delivery','planner','executor','boundaries','reference','compare','issues'];
+  const drawDiagram = () => {
+    const target = el('mode-flow');
+    const width = target.clientWidth;
+    if (width < 1) return;
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const fontSize = parseFloat(getComputedStyle(root).fontSize) || 14;
+    const lineHeight = fontSize * 1.45;
+    const mobile = width < 620;
+    const gap = mobile ? 38 : 48;
+    const boxWidth = mobile ? width - 2 : (width - gap * 2 - 2) / 3;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const svg = document.createElementNS(svgNS,'svg');
+    const add = (tag,attrs,text) => {
+      const node = document.createElementNS(svgNS,tag);
+      Object.entries(attrs).forEach(([key,value]) => node.setAttribute(key,String(value)));
+      if (text !== undefined) node.textContent=text;
+      svg.appendChild(node);
+      return node;
+    };
+    const wrap = (text, code=false) => {
+      context.font = fontSize + 'px ' + (code ? 'monospace' : getComputedStyle(root).fontFamily);
+      const lines=[];
+      let value='';
+      for (const char of text) {
+        if (value && context.measureText(value+char).width > boxWidth-28) { lines.push(value); value=char; }
+        else value+=char;
+      }
+      if (value) lines.push(value);
+      return lines;
+    };
+    const text = (x,y,value,className='') => add('text',{x,y,class:className},value);
+    const edge = (x1,y1,x2,y2,vertical) => {
+      add('path',{class:'edge',d:`M${x1} ${y1}L${x2} ${y2}`});
+      add('path',{class:'edge',d:vertical ? `M${x2-5} ${y2-6}L${x2} ${y2}L${x2+5} ${y2-6}` : `M${x2-6} ${y2-5}L${x2} ${y2}L${x2-6} ${y2+5}`});
+    };
+    const roles = currentMode==='eo' ? ['任务输入','执行会话','环境交互'] : ['Planner 输出','运行器处理','接收方'];
+    const rows=graphRows[currentMode];
+    let y = mobile ? 1 : 38;
+    add('title',{},captions[currentMode]);
+    svg.setAttribute('role','img');
+    svg.setAttribute('aria-label',captions[currentMode]);
+    if (!mobile) roles.forEach((role,index) => text(1+index*(boxWidth+gap),18,role,'role-label'));
+    rows.forEach((row,rowIndex) => {
+      const lines=row.map(([heading,body]) => ({heading:wrap(heading),body:body.flatMap(value=>wrap(value,/^[A-Za-z_<]/.test(value)))}));
+      const heights=lines.map(item=>28+(item.heading.length+item.body.length)*lineHeight);
+      const rowHeight=Math.max(...heights);
+      row.forEach((item,index) => {
+        const x = mobile ? 1 : 1+index*(boxWidth+gap);
+        const h = mobile ? heights[index] : rowHeight;
+        const delivered = (currentMode==='pc' && rowIndex===1) || (currentMode==='pe-d' && rowIndex===0) || currentMode==='pe-s';
+        add('rect',{x,y,width:boxWidth,height:h,rx:7,class:'record'+(delivered?' delivered':'')});
+        let baseline=y+21;
+        lines[index].heading.forEach(value=>{text(x+13,baseline,value,'node-heading');baseline+=lineHeight;});
+        baseline+=5;
+        lines[index].body.forEach(value=>{text(x+13,baseline,value,/^[A-Za-z_<]/.test(value)?'data-label':'');baseline+=lineHeight;});
+        if (mobile) {
+          y+=h;
+          if (index<2) { edge(width/2,y+8,width/2,y+gap-8,true); y+=gap; }
+        } else if(index<2) edge(x+boxWidth+8,y+h/2,x+boxWidth+gap-10,y+h/2,false);
+      });
+      if (!mobile) y+=rowHeight;
+      if (rowIndex<rows.length-1) y+=mobile?28:36;
+    });
+    const height=y+2;
+    svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+    svg.setAttribute('height',height);
+    target.replaceChildren(svg);
+  };
+  const showView = view => {
+    if (!views.includes(view)) return;
+    currentView=view;
+    el('architecture-controls').hidden=!architectureViews.includes(view);
+    root.querySelectorAll('[data-panel]').forEach(panel=>panel.hidden=panel.dataset.panel!==view);
+    root.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===view)));
+    if(view==='delivery') drawDiagram();
+  };
+  const draw = mode => {
+    if (!validMode(mode)) return;
+    currentMode = mode;
+    const data = modes[mode];
+    el('protocol-mode').value = mode;
+    root.querySelectorAll('[data-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===mode)));
+    el('mode-heading').textContent = data.title;
+    el('mode-caption').textContent = captions[mode];
+    el('mode-routes').innerHTML = table(['输出 / 来源','运行器处理','去向'], data.routes);
+    el('mode-fields').innerHTML = table(['字段','要求 / 来源','保存或交付'], data.fields);
+    el('planner-input').textContent = data.input;
+    el('planner-output').textContent = data.output;
+    el('parser-rules').innerHTML = table(['解析项','实际实现'], data.parser);
+    el('executor-delivery').textContent = data.delivery;
+    el('executor-rules').innerHTML = table(['环节','当前行为'], data.extra);
+    drawDiagram();
+  };
+  el('stop-order').innerHTML = table(['顺序','每步后条件','当前动作'],[
+    ['1','ScienceWorld 连续错误达到 max_error_steps','记录 environment_limit 并停止'],
+    ['2','环境已结束，且原因不是 max_steps','记录 task_finish；PC 有额度时调用终局 Planner；停止'],
+    ['3','Executor 累计调用数达到 executor_limit','记录 executor_budget 并停止'],
+    ['4','到 return_every 边界','记录 budget_pause；动态框架检查 Planner 额度并再规划'],
+    ['4a','动态框架 Planner 额度已用完','停止，原因 planner_budget'],
+    ['4b','PC 非终局 Planner 返回 finish','停止，原因 planner_finish'],
+    ['其余','未命中边界 / 停止条件','继续同一环境和 Executor 会话']
+  ]);
+  el('outcome-rules').innerHTML = table(['停止 / 评分项','当前规则'],[
+    ['protocol_error','Planner 格式或协议错误；停止后仍读取当前环境结果'],
+    ['runtime_error','模型、环境等普通异常；文本环境 success/reward 记 null'],
+    ['取消 / KeyboardInterrupt','run_framework 的普通 Exception 分支不捕获；可能不产生 stop/verifier，由上层处理。模型调用中断会先记录 interrupted 状态'],
+    ['task_finish / executor_budget / planner_budget / planner_finish / environment_limit','停止后读取当前文本环境的 state.success / state.reward；Planner 的 finish 不是独立成功证明'],
+    ['外部验证 external_verifier=True','运行器先写 stop 并返回；Terminal 的 Harbor 验证随后补 outcome / verifier'],
+    ['PC 终局收尾错误','仅记录 decision_error；不能重开环境或改变原生结果'],
+    ['初态 / Executor 会话','四框架内均持续；阶段切换不 reset'],
+    ['Planner 会话','每次新构造一条 user 输入；不发送完整旧 Planner 对话']
+  ]);
+  el('backend-rules').innerHTML = table(['环境','动作来源 / 语法','整任务结束'],[
+    ['ALFWorld','info.admissible_commands；保留原生动作校验；put in/on 规范化','原生 done；无阶段返回动作'],
+    ['ScienceWorld','info.valid；每次 reset/step 更新候选','原生 done 或连续错误上限；无阶段返回动作'],
+    ['WebShop','当前页 get_available_actions：search[keywords] / click[label]；查询为开放参数','购买的原生 done；Benchmark 适配器隐藏购买评分文本'],
+    ['Terminal-Bench','单行 shell 命令，在 /app 执行；退出码、stdout/stderr 为公开反馈','Action: finish 是整任务交付验证；不是阶段返回。该事件 action=null、dispatched=false、valid=true']
+  ]);
+  const dictHeaders = ['字段 / 结构','来源或校验','实际用途 / 可见性'];
+  el('field-dictionary').innerHTML =
+    section('A · 动态 Planner 的实际输入', dictHeaders, commonFields) +
+    section('B · 动态 Planner 的原始输出', dictHeaders, [
+      ['<plan>','guide / delegate 时要求非空；标签不区分大小写','PE-D：交付 Executor；PC：只存 global_plan；不验证 full/sub 语义'],
+      ['decision','PE-D: guide；PC: delegate/finish；终局 PC: finish','控制继续、委派或停止'],
+      ['hypotheses','始终须为字符串数组，包括 finish','替换状态；不校验真假'],
+      ['remaining_work','始终须为字符串数组，包括 finish','替换状态；不校验完整性或 finish 时必须为空'],
+      ['evidence_refs','须为已知公开观察的严格整数 ID 数组；字符串与 bool 不接受','仅初态和已完成工具观察可引用；去重后保存'],
+      ['stage_objective','仅 PC delegate 校验为非空字符串','PC 去首尾空白后交付；PE-D 多写也会被忽略'],
+      ['soft_guidance','仅 PC delegate 校验，默认空字符串','PC 去首尾空白后交付；PE-D JSON 同名字段不使用'],
+      ['其他 JSON 字段','不拒绝、不校验','保留在原始响应日志；不进入状态或交付'],
+      ['<decision> 标签','区分大小写；正文须可解析为单个 JSON 对象','不验证标签与 <plan> 的先后顺序；取首个匹配块'],
+      ['finish 的额外 plan / 阶段字段','公共数组和证据校验后直接返回','提示词要求省略；解析器实际忽略，不校验类型'],
+      ['PE-S 例外','不使用动态 JSON 解析器','没有标签时整段回复也可成为计划']
+    ]) +
+    section('C · Planner 状态与执行请求', dictHeaders, [
+      ['planner_state.goal / constraints','运行器初始化','Planner 可见；不由模型改写'],
+      ['planner_state.global_plan','最近一次非空解析计划，初始 null','每次覆盖；PC 仅回传 Planner；PE-S/PE-D 也交付 Executor'],
+      ['planner_state.observed_facts','累计 {event_id, observation}','每轮由公开观察重建；不是模型维护的摘要'],
+      ['planner_state.hypotheses / remaining_work / evidence_refs','初始 []；后续取最近 Planner 输出','每轮替换，不自动合并或核验内容'],
+      ['planner_state.plan_version','每次非空计划 +1','内部与日志；不送给模型，不代表阶段成功'],
+      ['execution_request.goal / hard_constraints','调用方目标和约束','日志；PC 作为请求字段交付，所有 Executor 初态已可见'],
+      ['execution_request.stage_objective','PC Planner 的当前阶段目标；其余为 null','PC 阶段请求交付'],
+      ['execution_request.soft_guidance','PC: 模型可选提示；PE-S/PE-D: 整份计划；EO: null','同名日志字段在不同模式中语义不同'],
+      ['execution_request.evidence_refs','当前 Planner 选择，EO/PE-S 为 []','日志引用；PC 实际交付为 evidence 数组'],
+      ['Executor 请求 evidence','[{event_id, observation}]','PC 按 refs 解引用；不包含动作候选、奖励、用量或事件元数据']
+    ]) +
+    section('D · 反馈：日志与 Planner 输入的差别', ['信息','日志字段','下一轮 Planner 实际收到'], [
+      ['工具事件引用','tool_event_refs','各项 event_id'],
+      ['观察变化','observed_changes[{event_id, observation}]','observed_changes[{event_id, action, observation}]'],
+      ['Executor 陈述','executor_claims[{event_id, text}]','同形式；文字取首个 Action 行之前，不保证是 Thought'],
+      ['产物引用','artifact_refs = []','不提供；当前没有实际产物引用收集逻辑'],
+      ['计量','usage.attempts / usage_responses / tokens','不提供'],
+      ['返回原因','return_reason','不提供；预算原因不写入 prompt'],
+      ['原生动作候选','tool_event.available_actions（非终局时）','不提供；仅 Executor 消息包含该附加列表'],
+      ['事实来源','累计 initial_observation + tool_event','observed_facts 中保留全部原始公开观察']
+    ]) +
+    section('E · 调用接口与响应', dictHeaders, [
+      ['run_framework.mode','eo / pe-s / pe-d / pc','当前没有独立 plan_scope 或 PE-D sub-plan 模式'],
+      ['env / planner / executor / save','调用方提供环境、异步模型回调、保存回调','模型回调输入为 messages，返回响应字典；EO 不调用 planner'],
+      ['goal / constraints / benchmark','调用方提供；benchmark 默认 alfworld','形成任务与硬约束；benchmark 选环境模板'],
+      ['workspace_id','调用方提供','日志与请求编号；不进入 prompt'],
+      ['executor_limit / planner_limit / return_every','正整数；EO 的 planner_limit 可为 0','内部执行与记录；env.max_steps 不能小于 executor_limit'],
+      ['external_verifier','默认 false','true 时运行器不自写最终评分，由调用方补充'],
+      ['messages[{role, content}]','传入模型的实际对话','Planner 每次仅一条 user；Executor 为累计 user/assistant 历史'],
+      ['response.text','Planner 拒绝空值/非字符串；Executor 非字符串退为空文本','Planner 解析计划/decision；Executor 交 env.step'],
+      ['response.finish_reason','Planner 为 length 则拒绝','Executor 路径没有同等 length 拒绝检查'],
+      ['response.usage / model / id / seconds','recipe model_call 的返回元数据','保存原始响应与计量；不整体注入模型输入'],
+      ['max_input_bytes / 每角色请求限制','Recipe 在 HTTP 请求前检查','超限抛异常；不构成阶段完成'],
+      ['model / temperature / max_tokens / reasoning_effort / stop','Recipe 模型请求参数','作为 API 参数；不把剩余执行额度写入 prompt']
+    ]) +
+    section('F · 记录与事件字段', ['记录 / 事件','字段','用途'], [
+      ['顶层 record','mode, workspace_id, goal, constraints, budgets, events, outcome','当前配置与轨迹；不含计划覆盖范围标记'],
+      ['所有 EventLog 事件','event_id, type, timestamp, workspace_id, request_id, plan_version','内部日志；event_id 作为公开观察引用时才进入对应模型内容'],
+      ['initial_observation','observation','公开初态，加入可引用观察集'],
+      ['model_call','role, messages, response, error, status, seconds','记录实际请求与响应；pending/complete/error/interrupted'],
+      ['planner_decision','decision, planner_state, stage_objective, soft_guidance, evidence_refs, model_event_id, prior_request_id','记录规划决策与状态'],
+      ['execution_request','goal, stage_objective, hard_constraints, soft_guidance, evidence_refs','记录执行任务；不是原样整对象发送给模型'],
+      ['tool_event','action, observation, valid, dispatched, model_event_id, executor_claims, seconds, 可选 available_actions','动作事实、原始观察与候选分开存储'],
+      ['execution_feedback','tool_event_refs, executor_claims, observed_changes, artifact_refs, usage, return_reason','最近执行分段的反馈日志；Planner 另做显式字段投影'],
+      ['tool_error','error, model_event_id, seconds','环境操作错误'],
+      ['decision_error','error, 可选 return_reason','协议错误；终局收尾错误不改评分'],
+      ['runtime_error','error','普通运行异常'],
+      ['stop','reason, attempts{planner, executor}','停止原因与累计调用数'],
+      ['verifier / outcome','reason, success, reward','停止后写入；外部验证由调用方完成'],
+      ['Recipe 追加标识','run_id, task_id, trial_id, arm, model, attempt 等','save_trial 给记录和事件附加；不进入模型 prompt'],
+      ['环境 State','reward, finished, success, terminate_reason, error, steps, incomplete, history, action_trace','持续执行状态；history 才是 Executor 模型消息来源']
+    ]);
+  el('review-points').innerHTML = table(['编号','当前代码事实','待你判断的协议选择'],[
+    ['P1','PC 同时要求独立 <plan> 和 stage_objective；阶段目标确由 Planner 生成','按阶段目标就是 sub-plan 的定义，是否去掉独立 full-plan 输出'],
+    ['P2','PC 还单列 soft_guidance；<plan> 不给 Executor','阶段子计划是否只保留一个交付字段；soft_guidance 是否必要'],
+    ['P3','PE-D 与 PC 均按固定累计调用轮数返回','阶段完成/取证结束与固定安全返回边界如何区分'],
+    ['P4','没有阶段完成判定，也没有阶段返回动作','Executor 是否需要明确的阶段返回协议，或继续由运行规则控制'],
+    ['P5','PC 非终局 finish 直接停止整项任务','结束建议与任务验收如何衔接'],
+    ['P6','PC 在原生终局后还可能调用一次 Planner','是否需要该收尾调用；它与同一 Planner 总额度共用'],
+    ['P7','所有旧指导、旧阶段与整任务原文都留在 Executor 历史','阶段委派的职责范围与实际可见上下文是否符合预期'],
+    ['P8','环境模板和共享动态模板都要求整体计划','覆盖范围是否从模板与控制模式中独立'],
+    ['P9','PE-D sub-plan 无配置、无独立结果身份','两种 PE-D 变体如何命名、调度和记录'],
+    ['P10','解析器只检查非空计划；多余字段、块顺序、full/sub 语义未检查','哪些是必须拒绝的格式约束，哪些只作提示'],
+    ['P11','observed_facts 是全部原始观察；hypotheses / remaining_work 每轮覆盖','Planner 状态中哪些由模型维护，哪些由运行器维护'],
+    ['P12','Planner 不接收完整旧聊天；Executor 则累计全部历史','两侧需要保留什么历史和证据'],
+    ['P13','soft_guidance 日志字段在 PE-S/PE-D 保存整份计划，在 PC 保存可选提示','字段命名是否应统一表达实际内容'],
+    ['P14','artifact_refs 始终为空；Executor 陈述没有验证','这些字段是否保留，以及什么才算可交付的执行证据']
+  ]);
+  el('source-index').innerHTML = table(['源码位置','对应逻辑'],[
+    ['src/toolkit/frameworks/control.py:22','动态 Planner JSON 解析与校验'],
+    ['src/toolkit/frameworks/control.py:78','record、budgets、Planner 状态初始化'],
+    ['src/toolkit/frameworks/control.py:109','Executor 初始化与硬约束'],
+    ['src/toolkit/frameworks/control.py:118','Planner 输入构造、状态与反馈投影'],
+    ['src/toolkit/frameworks/control.py:153','响应解析、状态更新、PC 阶段字段分流'],
+    ['src/toolkit/frameworks/control.py:191','执行请求日志与实际 Executor 控制消息'],
+    ['src/toolkit/frameworks/control.py:208','执行分段反馈'],
+    ['src/toolkit/frameworks/control.py:228','每步后的返回/停止优先级'],
+    ['src/toolkit/frameworks/control.py:253','异常、stop 与最终评分'],
+    ['src/toolkit/prompts/frameworks.py:18','PE-D、PC、终局、动态 JSON 与交付文本模板'],
+    ['src/toolkit/prompts/{alfworld,sciworld,webshop,terminalbench}.py:4','环境 Planner 与 Executor 原文'],
+    ['src/toolkit/rollout/session.py:32','模型请求记录、执行与工具事件'],
+    ['src/toolkit/envs/base.py:35','初态、动作解析、候选反馈与步数'],
+    ['src/recipe/planner-centered/run.py:54','模型 API 参数、字节限制与回调响应'],
+    ['src/recipe/planner-centered/benchmark.py:143','动态 Planner 上限按 ceil(executor_limit/return_every) 生成'],
+    ['src/recipe/planner-centered/terminal_benchmark.py:283','Terminal 动作与 finish 协议'],
+    ['src/toolkit/rollout/runner.py:18 / prompts/plan_injection.py:9','外部固定计划采样与三种注入位置']
+  ]);
+  // Prompt literals are inserted from the current workspace by the companion extraction step.
+  const literals = root.querySelector('#protocol-prompt-data');
+  if (literals) {
+    const data = JSON.parse(literals.textContent);
+    el('literal-prompts').innerHTML = data.map(([name, value]) => '<details><summary>' + esc(name) + '</summary><div class="section"><pre class="raw">' + esc(value) + '</pre></div></details>').join('');
+  }
+  el('comparison-table').innerHTML=table(['配置','Planner 输出','Executor 的新增输入','执行中何时再规划'],[
+    ['EO','不调用','无规划消息','不再规划'],
+    ['PE-S','整体计划','整份提取后的计划','不再规划'],
+    ['PE-D','完整剩余计划 + guide','整份提取后的计划','累计 Executor 调用数到固定边界'],
+    ['PC','完整剩余计划 + 阶段目标 + 可选提示','阶段目标、提示、所选证据；不含完整计划','同一固定边界；终局后还可能收尾调用']
+  ]);
+  el('stage-boundary-facts').innerHTML=table(['阶段边界项','当前实现'],[
+    ['阶段完成判定','没有判断 stage_objective 是否完成'],
+    ['Executor 阶段返回动作','没有 stage_complete / return_to_planner'],
+    ['计数','格式错误也计入 Executor 调用数与环境动作轮'],
+    ['新阶段','delegate 创建新 request_id；累计调用数、环境与 Executor 历史均不重置']
+  ]);
+  const persist = () => { history.replaceState(null,'','#'+(architectureViews.includes(currentView)?currentMode+'/'+currentView:currentView)); };
+  el('protocol-mode').addEventListener('change',()=>{draw(el('protocol-mode').value);persist();});
+  root.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{draw(button.dataset.mode);persist();}));
+  root.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{showView(button.dataset.view);persist();}));
+  const restore = () => {
+    const [first,second]=location.hash.slice(1).split('/');
+    if(validMode(first)&&views.includes(second)){
+      draw(first);
+      showView(second);
+      persist();
+    }else if(views.includes(first)){
+      showView(first);
+      persist();
+    }
+  };
+  draw(currentMode);
+  restore();
+  let diagramWidth=0;
+  new ResizeObserver(entries=>{
+    const width=entries[0].contentRect.width;
+    if(width!==diagramWidth){diagramWidth=width;if(width>0)drawDiagram();}
+  }).observe(el('mode-flow'));
+  window.addEventListener('hashchange',restore);
+})();
+</script>
+<footer><div class="wrap">依据当前工作区源码整理。示例仅表示协议形状；本页不读取旧实验结果，也不执行模型或环境调用。</div></footer>
+</body>
+</html>

@@ -8,6 +8,8 @@
 
 四种框架通过一次真实模型接口复验。EO 无外部规划，PE-S 首步前交付一次，PE-D 续接同一个整项任务请求，PC 随反馈发出新的阶段委派。四组均在四步后通过同一 ALFWorld 开发任务。该样本确认控制流；完整测试集结果和待人工核验的轨迹见实验记录。[轨迹与源码](experiments/planner-centered/README.md)
 
+当前工作区的模型输入只构造任务上下文。日志元数据及执行额度等运行器技术限制不告知模型，运行器继续执行和记录这些限制。Planner 模板已改为高层子目标与证据要求，Executor 的候选动作改由环境接口提供；候选目录与 Planner 原始观察分开。这些协议修改未重跑实验，对既有比较的影响尚未核验；历史原始 prompt 与结果保留。[问题与边界](DISCUSSION.md#四框架接口与评分口径)
+
 <details id="judgment-context">
 <summary>方向切换与历史方案</summary>
 
@@ -22,9 +24,11 @@
 <details id="unknown-context">
 <summary>尚未确定的设计与证据</summary>
 
-规划表示、内部形成过程、评价方法和更新算法尚未选定。多轮形成、经验检索、元规划库、树搜索和条件转换图均不因方向切换成为必需组件。四框架评测的后端、返回协议和预算已记录在[实验实现](src/recipe/planner-centered/README.md)，后续机制对照与训练设计仍待确定。
+规划表示、内部形成过程、评价方法和更新算法尚未选定。多轮形成、经验检索、元规划库、树搜索和条件转换图均不因方向切换成为必需组件。四种基础运行框架由 [`toolkit.frameworks`](src/toolkit/README.md#四种运行框架) 提供，与固定计划评估共用 [`toolkit.rollout` 的执行与采样组件](src/toolkit/README.md#执行与采样的组合)；本轮评测的后端装配与预算见 [Recipe](src/recipe/planner-centered/README.md)，后续机制对照与训练设计仍待确定。
 
 首轮 ALFWorld 诊断确认了一个独立采样漏掉可行路线的案例。该路线由固定 Executor 三次执行成功，与独立采样代表路线的步数相同。发生频率、跨任务和模型的适用范围仍待验证。[采样诊断](experiments/strategy-sampling/README.md)
+
+现行代码要求动态 Planner 提供剩余整体计划，并按固定周期返回。下一版协议已定稿，待实现。Executor 推进 EO 和 PE，PE-D-F/S 由原生 `request_plan` 触发重规划。Planner 推进 PC，PC-S 与 PC-F 同用 Initial Sub-Plan Generation 和 Continuous Execution Monitoring。PC-S 初始交付当前子计划，PC-F 初始生成带编号的完整计划并指定当前子计划。两者都逐步接收实际动作与环境反馈，先判断再交付。Executor 按生效的 sub-plan 刷新上下文，同阶段保留短窗口与可追溯事实。预算按真实环境步计算，收尾成本单列。P10 解析细则延后，运行效果待验证。历史三条主动叫停均获原生 0 分。[最终实施方案](experiments/planner-centered/protocol-design.md) · [18 项逐题讨论](DISCUSSION.md#规划覆盖范围与控制权) · [结束建议原文与评分](experiments/planner-centered/finish-advice.md)
 
 </details>
 

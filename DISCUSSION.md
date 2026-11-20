@@ -52,4 +52,86 @@
 
 首版接口验收加入 PE-D。在 ALFWorld 的双动作边界，PE-D 和 PC 都读到了遥控器已被拿起的公开证据。PE-D 在原整项请求下更新剩余规划，PC 发出新阶段请求，将目标改为把拿起的遥控器放到沙发上。四组最终动作相同。该接口已经在原子动作之间验证了续接。更复杂的阶段返回和独立隐藏验收需要其他后端。[实际轨迹与实现](experiments/planner-centered/README.md)
 
+原实现将整个 Planner 状态和反馈日志事件序列化进模型上下文，额外带入了运行标识、时间、计划版本和用量，也告知模型执行额度等技术限制。当前工作区改为显式构造任务上下文，保留任务、公开证据、规划和公开观察引用，具体边界见[框架接口](src/toolkit/README.md#四种运行框架)。执行额度用于防止无限运行，只由运行器执行和记录；剩余额度、返回间隔、阶段动作上限和内部返回原因不告知模型。此次修复没有重跑实验，不能据此判断这些额外字段对既有比较的影响；历史 prompt 按原样保存，后续若需核验影响，应单独定义对照与预算。
+
+### 规划覆盖范围与控制权
+
+当前实现把规划覆盖范围固定为 full-plan：四环境 Planner 模板要求 global plan，动态框架的共享协议要求覆盖全部剩余工作，状态字段也固定为 `global_plan`。解析器实际上只要求非空 `<plan>`，不检查计划是否覆盖完整任务；`missing_full_plan` 是当前错误名称。PC 向 Executor 下发的是当前阶段目标与 `soft_guidance`，整体计划保留在 Planner 状态中。[共享协议](src/toolkit/prompts/frameworks.py) · [控制与解析](src/toolkit/frameworks/control.py)
+
+这里的 sub-plan 覆盖一个高层阶段，可以需要多次环境交互。下一版由 Executor 推进 EO 和 PE，Planner 推进 PC；动态 PE 与 PC 都可以采用 full 或 sub 的规划范围。研究者已确认 Planner 先判断再交付、Executor 按生效的 sub-plan 刷新上下文，阶段内使用短窗口与可追溯事实，并采用 P6 的预算与收尾规则。`remaining_work` 暂留，P10 解析细则延后。下文保留这些选择对应的讨论和历史证据。[最终实施方案](experiments/planner-centered/protocol-design.md) · [现行源码协议](experiments/planner-centered/protocol-review.html#issues)
+
+#### 四个运行问题
+
+**Q1　谁发起重规划？** 当前运行器按累计 Executor 调用数检查 `return_every`，格式错误也计数。ALFWorld 和 WebShop 的常用设置为两次，ScienceWorld 和 Terminal-Bench 正式配置为四次。EO 和 PE-S 在边界只写反馈，Executor 接着执行。PE-D 与 PC 在边界强制调用 Planner，可能改指令，也可能因 Planner 额度已满而提前停止。两步足以复现基线，却无法表达「第一步已推翻前提」或「第三步才能观察到结果」。[控制循环](src/toolkit/frameworks/control.py) · [采样配置](src/recipe/planner-centered/benchmark.py)
+
+| 拟议配置 | 谁决定重新规划、何时决定 | Executor 接下来做什么 |
+| --- | --- | --- |
+| EO | 无 Planner。 | 自主承担整项任务。 |
+| PE-S | 首步前交付一次整体计划，之后无需规划检查。 | 持续执行。 |
+| PE-D-F | Executor 发现原路线所依赖的前提改变，调用配置为 full 的规划工具。 | 读取针对剩余整任务的更新建议，继续持有整任务。 |
+| PE-D-S | Executor 判断当前子目标已达成、受阻或需要替换，调用同一规划工具的 sub 配置。 | 得到一份可执行的子计划，决定何时发起下一次调用。 |
+| PC-F | Planner 形成带编号的完整计划，指定当前子计划。每步反馈后决定继续、推进编号或修订路线。 | 接到 Planner 的单步执行调用，选择并派发一个环境动作。 |
+| PC-S | Planner 先给当前阶段子计划，每步反馈后判断是否满足该阶段条件以及下一目标。 | 执行同一个单步工具。环境返回动作结果，Executor 无须另外撰写报告。 |
+
+PE-D 中，Executor 通过原生 `request_plan` 调用触发重规划。工具文档说明适用时机、理由参数和返回内容。Executor 提供本次求助的原因，Harness 从已有状态补齐任务、约束、当前计划和有关观察，因而完整的 Planner 请求无须由 Executor 重写。原生调用可能减少格式学习负担，时机判断和证据选择仍需由模型承担，其效果尚待测量。PC 每个真实动作得到环境反馈后都由 Planner 查看，监控可以维持当前阶段；“看过结果”和“实际修改计划”应分别计数。
+
+**Q2　初次规划和重规划应共用什么？** 现行动态指令反复要求剩余整体计划。下一版的 PE-D-F 复核求助理由并决定是否修订剩余路线，PE-D-S 根据触发原因给下一子计划。PC-S 和 PC-F 共用两个明确的阶段。**Initial Sub-Plan Generation** 首次确定当前阶段，PC-S 生成首个子计划，PC-F 生成带编号的完整计划并指定第一个生效的子计划。**Continuous Execution Monitoring** 在每次实际动作得到环境反馈后由 Planner 判断维持、转段或修订。两阶段都先判断再交付，公开输出先给能回查的简短判断依据，计划只写待做工作。旧轨迹中“确认马克杯已放入柜子”属于核对事项，观察即使证实放入，也不足以证明它满足 `cup` 类别。[现行模板](src/toolkit/prompts/frameworks.py) · [旧任务 58](experiments/planner-centered/finish-advice.md)
+
+**Q3　下一次决策真正要读什么？** 当前动态 Planner 每次收到初始观察、全部累计公开观察和最近一段动作与观察。初始观察在模板和累计事实中重复，最近一段也在两个字段中重复；上一轮实际委派的 `stage_objective` 却未显式送回 Planner。Executor 每步重发完整 `state.history`，包含旧指令、旧动作菜单和整段模型回答。WebShop 当前两处入口都指定 `observation_mode="text"`，模型看到的是商品页面文本，长列表和菜单仍会反复发送。若每步增加约 *b* 个 token，*T* 步下来仅 Executor 历史输入就约为 *bT(T+1)/2*。现有请求字节上限只能拒绝超长输入。这是增长关系，尚无新协议的实测 token 节省值。[Planner 输入](src/toolkit/frameworks/control.py) · [Executor 输入](src/toolkit/rollout/session.py) · [WebShop 配置](src/recipe/planner-centered/webshop_benchmark.py) · [请求字节检查](src/recipe/planner-centered/run.py)
+
+建议完整事件与原文留作可回放轨迹，模型输入按角色生成有界视图：
+
+| 使用者 | 每轮可见 | 谁维护 |
+| --- | --- | --- |
+| Planner | 原目标与硬约束、实际交付中的计划或阶段、与判断相关且可追溯的事实、未证实的假设、暂留的剩余工作，以及本次触发原因和新增证据。 | 运行器保留交付原文与公开事件；Planner 维护假设、剩余工作及要保留的证据。引用指向有实质信息的观察，可按需回查。 |
+| Executor | 角色与硬约束、当前有效委派或建议、当前观察与原生动作菜单、最近少量动作及其结果；跨窗口仍有用的事实可带公开摘录和出处。 | 运行器按同一窗口和输入上限构造；旧菜单与旧委派不再作为有效指令，环境状态持续。 |
+
+PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划、最新动作与环境反馈，以及已有的阶段退回原因。PC-F 保留生效的完整计划、当前子计划编号和发生修订时的原因。正常单步返回时尚未作出阶段判断，界面可以写“本步得到环境反馈”；是否结束阶段与转向理由由 Planner 据此判断后写入状态。范围修订时保持已验证结果可追溯，避免旧编号误指新目标。
+
+本地核对了模型调用入口。verl-agent 的默认训练 rollout 逐步从本轮观察构造单条 user 消息，经 chat template 编码后交给生成 worker。verl-agent-system 的外部 Executor 在每步把本轮格式化观察与当前 metaplan 组成一条 user 消息，调用 Chat Completions。WebShop 的环境模板可在单条消息内带最近 K 次交互，默认 K=2，带历史的提示超过 13,000 个字符时当轮去掉历史。本仓库的 Executor 则直接把累计 `state.history` 作为请求的 `messages`。命中前缀缓存仍占上下文长度，是否命中及实际成本须按模型返回的 usage 核对。窗口长度与重规划时机可以独立选择。[verl-agent rollout](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/agent_system/multi_turn_rollout/rollout_loop.py) · [上游 WebShop 窗口](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/agent_system/environments/env_manager.py#L464-L505) · [本仓库 Executor 请求](src/toolkit/rollout/session.py)
+
+**Q4　谁解析 `<decision>`？** 现行 PE-D/PC 在运行器中解析 JSON，PE-D 下发计划正文，PC 重建阶段请求但仍将其序列化进 Executor 的消息。PE-S 在缺少 `<plan>` 时可把整段非空回复当作计划。新工具协议要求 Harness 解析决定、参数与结果，分别给目标角色渲染任务文字、具体动作和公开反馈。原生 API 的工具定义、参数与调用配对仍属于传输协议，跨角色内容不嵌入整段请求 JSON。更细的格式兼容问题按 P10 暂缓。[解析与下发](src/toolkit/frameworks/control.py) · [PE-S 回退](src/toolkit/prompts/plans.py)
+
+#### 审查页 P1–P14 的回应
+
+**P1　当前阶段和完整计划各由谁维护？** PC-S 的当前阶段目标本身就是 sub-plan，无需额外的一份 full-plan。PC-F 允许 Planner 维护一份带编号的 full-plan 和当前子计划编号，推进到已有的下一阶段可只更新编号。两者都让 Planner 在下一轮监控时看到上轮真实交付，并只调用 Executor 做当前的一步。旧实现同时要求互相独立的完整计划和阶段文本，导致两者可能分歧。见 Q2、P7、P8。
+
+**P2　执行记忆采用短窗口与可追溯事实。** 研究者认可这一方向。当前任务、有效阶段、最新页面与原生动作菜单持续可见，最近少量动作及结果支撑局部操作；更早的价格、对象或约束可以作为带出处的事实保留。对四架构使用同一窗口和证据规则，避免 PC 的单步工具需要额外产出记忆报告。窗口取值与事实选取的代价应结合输入 token、遗漏旧属性和任务结果核验。见 Q3、P12、P13。
+
+**P3　阶段完成、取证结束和安全返回如何落地？** 建议分别记录此次取得的公开证据、该证据是否满足阶段目标、运行器有无因资源或故障中断。查到商品价格高于限价时，核价取证可结束；若阶段是寻找合格商品，阶段仍未完成。PC 每次工具返回都可以交付这个价格，由 Planner 决定阶段去留，得到结果本身不改变阶段编号。预算或安全边界只改变执行状态，保留最后一次观察和待验阶段。见 Q1、P4、P6。
+
+**P4　工具模式怎样返回？** 动态 PE 由 Executor 在需要规划的时刻调用规划工具，参数带原因及必要公开证据。工具返回可读的完整剩余计划或下一子计划；这次求助不执行环境动作。PC 的调用方向相反，Planner 调用 Executor 单步工具，工具在同一环境执行一个动作并把实际动作与环境反馈送回 Planner。一次工具返回只完成这一步。两类调用都不需要另设阶段返回动作，也不会把阶段返回误发为整任务 `finish`。见 P3、P6。
+
+**P5　Planner 有没有足够证据宣告任务结束？** 核查了四套正式旧运行实际保存的 965 条 PC 轨迹。环境结束前被接受的三次 `finish` 全部来自 ALFWorld，三条原生奖励都为 0。Planner 分别把 `handtowel` 当作 `cloth`、`mug` 当作 `cup`、`butterknife` 当作 `knife`。日志能证明操作了相应物品，无法证明该物品满足目标类别。反过来，在被提示环境已经结束之后，ALFWorld 的 118 条有效收尾都得到 1 分；这取决于调用时点和样本，无法据此估计主动识别终局的能力。WebShop 也有收尾称全部满足、原生分数只有 0.4 的轨迹。P6 确定有原生终止信号时由环境判终，模型意见可保留供分析。三条主动叫停无法估计模型的一般误停率。[结束建议原文、同轮证据、事件编号与评分](experiments/planner-centered/finish-advice.md)
+
+**P6　收尾与预算已确认。** 闭合任务按原生终局结束，随后至多一次只读收尾。开放任务由整任务负责人提交，验收缺席记待验。收尾、常规 Planner 调用、真实环境步、token 与耗时分别记账。采用真实派发的环境交互作主预算，取消独立 Planner 总额度，无动作往返设界以防空转，模型不可见剩余额度。末步先处理已发生的原生终局或验收；PC 对终局动作的最后一次观察可兼作收尾。见 P3、P4、P5、P14。
+
+**P7　按生效的 sub-plan 刷新 Executor 上下文。** 研究者已确认此边界。新子计划生效或当前阶段的职责被替换时，Executor 从当前目标、硬约束、环境观察、原生动作菜单和可追溯事实重建输入，工作区与真实环境连续。同一阶段内使用短窗口。PC 监控决定维持、PE 的规划工具给出维持意见，或 full-plan 只修订未来阶段时，当前窗口继续使用。PC-F 推进当前阶段编号、PC-S 换目标以及 PE-D-S 启用下一子计划时才开启新窗口。PE-D-F 与 PE-S 若有可辨认的当前执行阶段，同样按该阶段切换；EO 缺少显式 sub-plan 时以整任务为边界。LongHorizon-Harness 按子任务契约刷新上下文，一个契约内也可多步执行。见 P1、P8、P12。[原论文 §2.3](https://arxiv.org/html/2608.01964v1#S2.SS3)
+
+**P8　独立配置规划覆盖范围。** full 覆盖剩余整任务，sub 覆盖一个可以跨步的阶段。EO 无规划范围，PE-S 一次性交付 full。PE-D-F/S 绑定到同一规划工具的不同配置，PC-F/S 则决定 Planner 保存完整计划与当前编号，还是保存已验证的阶段序列与当前阶段。两轴分开后，可以在相同范围内考察谁控制下一步。见 Q2、P1、P9。
+
+**P9　PE-D-F 和 PE-D-S 共用动态指导的实现。** 已明确用这两个名称。F 修订剩余整项计划；S 在当前子目标结束后给下一份建议。两者都由 Executor 持有整任务，可在相同模型和记忆条件下比较覆盖范围。建议从框架族和 scope 派生唯一的运行标签，调度、清单、轨迹、汇总和阅读器沿用它，避免同一结果被算两次或混到一起。历史 `pe-d` 有全计划要求和固定边界，阅读时注明旧协议；不能直接当作新版 PE-D-F 的测量。见 Q1、P7、P8。
+
+**P10　解析细则延后。** 当前动态解析取第一个匹配块，不检验块顺序、额外键或计划是否覆盖整任务。新接口先明确工具参数、行动方、返回内容与消息去向；重复块、扩展键及旧文本格式的兼容策略按研究者要求在其余部分完善后再审。协议能解析与证据能否支持阶段完成仍需分别验证。见 Q4、P5、P14。
+
+**P11　暂留 `remaining_work`，明确其认识边界。** 运行器持有公开观察、来源、实际交付和动作结果；Planner 维护假设与剩余工作估计。当前两个列表每轮被替换，某项从列表消失可能表示已完成、被推翻或模型遗忘。因此空列表不能触发终止，遗漏也不能删除事实。建议先允许保留、修正或撤销估计，随后再比较它对下一次决策是否有独立作用、与 plan 的重复量和 token 成本。在其他变化稳定前保留该字段，避免同时改动太多因素。见 Q3、P5、P13。
+
+**P12　两个角色需要不同的历史视图。** 完整原始轨迹可回放。Executor 每轮只取当前执行上下文、阶段内近期动作与跨阶段仍有关的事实；PC 的 Planner 读取 Q3 中按 F/S 区分的状态和本次实际动作及反馈。验收时同时检查旧商品价格能否按来源取回、旧页面菜单是否退出，以及阶段刷新后环境是否仍保留先前动作产生的变化。见 Q3、P2、P7。
+
+**P13　`soft_guidance` 是否有独立用途？** 当前日志在 PE-S/PE-D 用它存整份计划，在 PC 用它存可选建议。即便字符串相同，交付职责也不同；对这个字段做统一统计容易误读。待选 **A**：删除独立软提示，PE 的 `plan`、PC 的 `stage_objective` 各只生成、交付和记录一次。**B**：保留可选执行建议，但必须说明与阶段目标、假设、证据均不同的用途，例如两条都满足硬约束的路线之间有一项偏好。建议先选 A；若研究需要控制这种偏好，再引入 B，并承认它改变了 Executor 收到的指导。旧字段继续按历史语义读取。见 P1、P2、P11。
+
+**P14　如何知道 Executor 真的做到了？** 当前 `executor_claims` 取自首个行首 `Action:` 之前的内容，`artifact_refs` 恒为空。新的 PC 单步工具直接返回实际动作与环境观察；阶段验证把这些证据与阶段目标对应，推断标明仍待验证。PE 调用规划工具的理由也仅是请求方的说明。通用协议可先用公开事件与出处，有文件交付的后端再给可读取的版本引用和验收状态。隐藏测试保持隔离。见 P4、P5、P10。
+
+这些选择有四处耦合最强：触发权与阶段范围决定谁还能行动，记忆与字段决定双方能核对什么，格式与验收决定一个建议有多大权限，反馈频率与上下文长度共同决定成本。各组应在同一个反例上检验，再解释框架差异。[跨项分析与验收条件](experiments/planner-centered/protocol-design.md#6-哪些问题必须一起审核)
+
+### Planner 能力说明与动作接口
+
+规划粒度与动作信息的可见范围分别定义。高层 Planner 负责子目标、前提依赖、取证和路线调整，需要了解 Executor 的能力与约束；知道动作接口本身不使它成为低层策略。原 ALFWorld 与 ScienceWorld 模板直接列出原子命令，并以执行者口吻描述，存在诱导逐动作规划的风险。按研究者要求，当前四环境模板参考本地 `verl-agent-system` 的抽象 global plan 写法，改为子目标、前提和证据要求，删除具体命令指令。动态候选目录只加入 Executor 消息，Planner 接收原始公开观察与已执行动作；职责分离同时落实在提示词和输入构造中。[当前模板](src/toolkit/prompts/alfworld.py) · [规划职责](PROPOSAL.md#2-共同设定与框架选择)
+
+动作语法模板、动作与对象的候选组合、当前状态的有效动作须分开。按本轮实际依赖核查，ALFWorld 0.4.2 的 TextWorld 后端返回 `info["admissible_commands"]`；ScienceWorld 1.2.3 提供 `get_possible_actions()` 模板、包含无效项的 `get_possible_action_object_combinations()`，以及 `get_valid_action_object_combinations()` 和 `info["valid"]`。当前适配器将 ALFWorld 与 ScienceWorld 原生 reset/step 返回的有效列表提供给 Executor，ALFWorld 缓存更新方式参考 verl-agent。WebShop `64fa2a5` 的 `get_available_actions()` 从当前页面提取搜索框与可点击标签，也经统一接口提供给 Executor。四种框架沿用同一后端的相同规则；候选不保证动作推进任务或购物成功。[ALFWorld 接口](https://github.com/alfworld/alfworld/blob/0.4.2/alfworld/agents/environment/alfred_tw_env.py) · [ScienceWorld 接口](https://github.com/allenai/ScienceWorld/blob/1.2.3/scienceworld/scienceworld.py) · [WebShop 接口](https://github.com/princeton-nlp/WebShop/blob/64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd/web_agent_site/envs/web_agent_text_env.py)
+
+原手写列表存在实际不匹配：核查 ALFWorld 测试清单中 task 0 与首个灯下查看任务的游戏内嵌 grammar，`ToggleObject` 使用 `use {o}`，旧模板却写 `toggle {obj} {recep}`，适配器没有对应转换。旧列表还遗漏 `look`、`inventory`、`examine`；ScienceWorld 旧列表同样不完整，容器内部检视应区分 `look in` 与 `look at`。这些是静态源码与游戏定义核查，不代表已重测所有任务。当前 Executor 改用环境候选，不再维护手写目录。Terminal-Bench 保留实际 shell 执行和 `finish` 接口，不伪造有限候选列表。动态有效列表提供额外的状态可行动性信息，不等同于 expert plan 或 gold path。本次协议改动没有重跑旧实验，也未核验对既有比较的影响；历史原始 prompt 和结果保留。[ALFWorld 清单](experiments/planner-centered/runs/alfworld-test-01/manifest.json) · [ALFWorld 适配器](src/toolkit/envs/alfworld_env.py) · [ScienceWorld 适配器](src/toolkit/envs/sciworld_env.py) · [WebShop 适配器](src/toolkit/envs/webshop_env.py)
+
+### 评分与外部故障
+
 ALFWorld 的 HTTP 429、连接错误、超时和服务端错误会留下缺评。原生零分对应环境给出的失败结果。定向补跑只覆盖有外部故障证据且仍缺评的组合，固定任务、模型、框架和单条执行额度，保留该组合首个有效原生评分。比较报告用共同有分任务配对，已归档尝试只参与可核对的成本统计。[补跑证据与评分口径](experiments/planner-centered/README.md#完整测试集评测)

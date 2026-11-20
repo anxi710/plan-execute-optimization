@@ -1,5 +1,9 @@
 # 四框架真实模型验收
 
+[当前代码的协议审查](protocol-review.html)按架构展示交付关系、Planner 和 Executor 协议；共用的返回规则、字段与原文、架构对比及待审查点独立展示。它沿用本目录 `audit.html` 的主题，是可直接在浏览器打开的独立 HTML 页面，内容依据当前代码。
+
+针对这份代码的 [18 项协议讨论](../../DISCUSSION.md#规划覆盖范围与控制权)保留了逐题依据。[下一版协议的最终实施方案](protocol-design.md)给出 PE 的原生规划工具、PC-S/F 的两阶段流程、按生效子计划切换的执行上下文及验收条件。下列实验采用各自运行清单记录的历史协议。[旧实验中的结束建议](finish-advice.md)可逐条核对 Planner 原话、环境观测、停止原因和评分。
+
 [打开 ALFWorld 完整结果页](alfworld.html)：集中查看最新 134 个测试任务、四模型与四框架的 2,144 条有效评分，以及可选择、可对比的交互轨迹。下文保留单任务接口验收、各套评测范围与原始证据。
 
 EO、PE-S、PE-D 和 PC 在同一 ALFWorld `dev/2` 初态上各完成一次真实模型运行。四组都在四步后获得环境原生奖励 1。每组保留独立环境，组内延续 Executor 会话与环境状态。使用同济平台的 `DeepSeek-V4.1-Flash`，Planner 与 Executor 的角色设置在各组固定。[打开审查页](audit.html) · [实现与复现](../../src/recipe/planner-centered/README.md)
