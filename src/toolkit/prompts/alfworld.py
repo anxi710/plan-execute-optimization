@@ -16,12 +16,10 @@ Format your plan as follows:
 Step 1: ...
 Step 2: ...
 ...
-</plan>
-"""
+</plan>"""
 
 ALFWORLD_EXECUTOR_TEMPLATE = """Complete the household task using the observations and current Available actions supplied by the environment.
 Choose the next action from the current list. Use new feedback to adjust local execution while preserving the task goal and constraints.
 
 Write exactly one nonempty Action: <command> line per turn.
-You may include a brief Thought: line before it. Thought is reasoning text, not an environment command.
-"""
+You may include a brief Thought: line before it. Thought is reasoning text, not an environment command."""

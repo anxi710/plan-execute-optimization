@@ -16,8 +16,7 @@ Format your plan as follows:
 Step 1: ...
 Step 2: ...
 ...
-</plan>
-"""
+</plan>"""
 
 TERMINALBENCH_EXECUTOR_TEMPLATE = """You are the Executor for this Terminal-Bench task.
 Return one Action line per turn. Action: <one shell command> runs a command in /app.
