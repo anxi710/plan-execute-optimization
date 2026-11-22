@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from run import (
     CONFIG_PATH, EXECUTOR_LIMIT, MODEL_SETTINGS, RECIPE_CONFIG, load_model_settings,
-    PLANNER_LIMITS, RETURN_EVERY,
+    TOOLKIT_SETTINGS, load_context_window,
     run_matched_trial, runtime_versions, save_trial, source_version, task_goal, utc_now,
 )
 from toolkit.models.openai import AsyncChatClient
@@ -38,10 +38,9 @@ UNPACED_ENV = "PLANNER_BENCHMARK_UNPACED"
 MAX_TRIAL_ATTEMPTS = 2
 TRANSIENT_ERRORS = {"RateLimitError", "APITimeoutError", "APIConnectionError", "InternalServerError"}
 ORDER_SEED = 417
-MAX_INPUT_BYTES = 32_000
 MAX_OUTPUT = {"planner": 1536, "executor": 768}
 SCHEMA_VERSION = 2
-PURPOSE = "paired_model_framework_benchmark"
+PURPOSE = "untrained_framework_benchmark"
 
 
 class PacedClient:
@@ -124,29 +123,22 @@ def checkpoint_error(record, status):
     return record.get("error")
 
 
-def requested_protocol(run_dir, resume, legacy=False):
-    """Pin the protocol for new runs and recover the recorded choice on resume."""
-    if not resume:
-        return None if legacy else FRAMEWORK_PROTOCOL
-    protocol = read_json(run_dir / "manifest.json").get("protocol_version")
+def requested_protocol(run_dir, resume):
+    protocol = read_json(run_dir / "manifest.json")["protocol_version"] if resume else FRAMEWORK_PROTOCOL
     validate_execution_protocol(protocol)
-    if legacy and protocol is not None:
-        raise ValueError("The saved run uses the two-phase protocol")
     return protocol
 
 
 def validate_execution_protocol(protocol):
-    if protocol not in {None, FRAMEWORK_PROTOCOL}:
-        raise ValueError(f"Unsupported execution protocol {protocol!r}; historical runs are read-only. "
-                         f"Start a new run with {FRAMEWORK_PROTOCOL}.")
+    if protocol != FRAMEWORK_PROTOCOL:
+        raise ValueError(f"Unsupported protocol {protocol!r}; this runner requires {FRAMEWORK_PROTOCOL}.")
 
 
-def scheduled_manifest(dataset, run_id, *, model_order=None, protocol_version=None, model_settings=None):
+def scheduled_manifest(dataset, run_id, *, model_order=None, protocol_version=FRAMEWORK_PROTOCOL,
+                       model_settings=None, context_window=None):
     validate_execution_protocol(protocol_version)
-    use_framework_protocol = protocol_version == FRAMEWORK_PROTOCOL
-    modes = FRAMEWORK_MODES if use_framework_protocol else PLANNER_LIMITS
-    if model_order is not None and not isinstance(model_order, (list, tuple)):
-        raise ValueError("Expected a list of benchmark model names")
+    if isinstance(model_order, str):
+        raise ValueError("model_order must be a sequence of model names")
     model_order = MODELS if model_order is None else tuple(model_order)
     if (not model_order or any(not isinstance(model, str) or not model.strip() for model in model_order)
             or len(set(model_order)) != len(model_order)):
@@ -155,74 +147,41 @@ def scheduled_manifest(dataset, run_id, *, model_order=None, protocol_version=No
     trace_suffix = ".json.gz" if dataset.get("compress_traces") else ".json"
     models = {
         model: {role: {**config, "model": (config["model"] or model) if role == "planner" else model,
-                       "max_tokens": MAX_OUTPUT[role]}
-                for role, config in model_settings.items()}
+                       "max_tokens": MAX_OUTPUT[role]} for role, config in model_settings.items()}
         for model in model_order
     }
-    return_every = None if use_framework_protocol else dataset.get("return_every", RETURN_EVERY)
-    if not use_framework_protocol and (type(return_every) is not int or return_every < 1):
-        raise ValueError("Expected a positive return interval")
-    input_limit = dataset.get("max_input_bytes", MAX_INPUT_BYTES)
-    if type(input_limit) is not int or input_limit < 1:
-        raise ValueError("Expected a positive model input byte limit")
-    budgets = {}
+    budgets, trials = {}, {}
     for task in dataset["tasks"]:
-        task_id = task["task_id"]
+        task_id = str(task["task_id"])
         limit = task.get("executor_limit", EXECUTOR_LIMIT)
-        if (not re.fullmatch(r"[A-Za-z0-9_-]+", str(task_id)) or str(task_id) in budgets
+        if (not re.fullmatch(r"[A-Za-z0-9_-]+", task_id) or task_id in budgets
                 or type(limit) is not int or limit < 1):
             raise ValueError(f"Invalid task identity or Executor limit: {task_id}")
-        budget = {"executor_limit": limit}
-        if not use_framework_protocol:
-            dynamic = (limit + return_every - 1) // return_every
-            budget["planner_limits"] = {**PLANNER_LIMITS, "pe-d": dynamic, "pc": dynamic}
-        budgets[str(task_id)] = budget
-    trials = {}
-    for model in model_order:
-        index = MODELS.index(model) + 1 if model in MODELS else len(MODELS) + model_order.index(model) + 1
-        for task in dataset["tasks"]:
-            task_id = task["task_id"]
-            for mode in modes:
+        budgets[task_id] = {"executor_limit": limit}
+        for index, model in enumerate(model_order, 1):
+            for mode in FRAMEWORK_MODES:
+                scope = PLAN_SCOPES[mode]
                 trial_id = f"m{index}-t{task_id}-{mode}"
-                scope = PLAN_SCOPES.get(mode)
                 trials[trial_id] = {
                     "trial_id": trial_id, "model": model, "task_id": task_id, "mode": mode,
                     "workspace_id": f"{run_id}/{trial_id}/attempt-1", "file": f"trials/{trial_id}{trace_suffix}",
                     "status": "queued", "started_at": None, "finished_at": None, "archived_attempts": [],
-                    "executor_limit": budgets[str(task_id)]["executor_limit"],
-                    **({"plan_scope": scope, "protocol_version": protocol_version,
-                        "framework_family": mode.removesuffix(f"-{scope[0]}") if scope else mode}
-                       if use_framework_protocol else {
-                        "planner_limit": budgets[str(task_id)]["planner_limits"][mode],
-                        "return_every": return_every,
-                    }),
+                    "executor_limit": limit, "plan_scope": scope, "protocol_version": protocol_version,
+                    "framework_family": "pe-d" if mode.startswith("pe-d") else "pc" if mode.startswith("pc") else mode,
                 }
     order = list(trials)
     if dataset.get("selection") != "single_task":
         random.Random(ORDER_SEED).shuffle(order)
-    executor_limits = {budget["executor_limit"] for budget in budgets.values()}
-    uniform = len(executor_limits) == 1
-    budget = {
-        "executor_limit": next(iter(executor_limits)) if uniform else None,
-        "budgets_by_task": budgets, "max_input_bytes_per_request": input_limit, "automatic_retries": 0,
-        "dispatch_rate_per_minute": REQUESTS_PER_MINUTE, "max_attempts_per_trial": MAX_TRIAL_ATTEMPTS,
-    }
-    if use_framework_protocol:
-        budget["unit"] = "real_environment_dispatch"
-    else:
-        executor_calls = sum(trial["executor_limit"] for trial in trials.values())
-        planner_calls = sum(trial["planner_limit"] for trial in trials.values())
-        budget.update(
-            planner_limits=next(iter(budgets.values()))["planner_limits"] if uniform else None,
-            return_every=return_every, max_requests=executor_calls + planner_calls,
-            max_output_tokens=executor_calls * MAX_OUTPUT["executor"] + planner_calls * MAX_OUTPUT["planner"],
-        )
+    limits = {budget["executor_limit"] for budget in budgets.values()}
     return {
         "schema_version": SCHEMA_VERSION, "run_id": run_id, "purpose": PURPOSE,
-        **({"protocol_version": protocol_version, "modes": list(modes)} if use_framework_protocol else {}),
+        "experiment": "planner-centered-v2", "protocol_version": protocol_version, "modes": list(FRAMEWORK_MODES),
         "status": "running", "started_at": utc_now(), "finished_at": None, "invocations": [],
         "models": models, "model_order": list(model_order), "benchmark": dataset,
-        "budget": budget,
+        "budget": {"executor_limit": next(iter(limits)) if len(limits) == 1 else None,
+                   "budgets_by_task": budgets, "context_window": dict(context_window or TOOLKIT_SETTINGS["context_window"]),
+                   "unit": "real_environment_dispatch", "automatic_retries": 0,
+                   "dispatch_rate_per_minute": REQUESTS_PER_MINUTE, "max_attempts_per_trial": MAX_TRIAL_ATTEMPTS},
         "order_seed": ORDER_SEED, "run_order": order, "trials": trials,
         "records": {trial_id: trial["file"] for trial_id, trial in trials.items()},
         "source": source_version(), "runtime": runtime_versions(dataset.get("runtime_packages")),
@@ -257,18 +216,11 @@ def can_retry_trial(run_dir, trial):
     current = run_dir / trial["file"]
     if current.is_file():
         paths.append(current)
-    attempts = len(paths)
-    for path in paths:
-        if attempts < MAX_TRIAL_ATTEMPTS:
-            break
-        record = read_json(path)
-        if record["status"] == "error" and record.get("error") == "OSError" and record["events"] == []:
-            attempts -= 1
-    return attempts < MAX_TRIAL_ATTEMPTS
+    return len(paths) < MAX_TRIAL_ATTEMPTS
 
 
 async def run_matrix(run_dir, rows, dataset, api_key, *, run_one, concurrency=CONCURRENCY, resume=False,
-                     model_order=None, protocol_version=None, model_settings=None):
+                     model_order=None, protocol_version=FRAMEWORK_PROTOCOL, model_settings=None, context_window=None):
     validate_execution_protocol(protocol_version)
     if not 1 <= concurrency <= MAX_CONCURRENCY:
         raise ValueError(f"Concurrency must be between 1 and {MAX_CONCURRENCY}")
@@ -285,9 +237,9 @@ async def run_matrix(run_dir, rows, dataset, api_key, *, run_one, concurrency=CO
         manifest = read_json(manifest_path) if resume else None
         run_id = manifest["run_id"] if resume else uuid4().hex
         expected = scheduled_manifest(dataset, run_id, model_order=model_order,
-                                      protocol_version=protocol_version, model_settings=model_settings)
+                                      protocol_version=protocol_version, model_settings=model_settings, context_window=context_window)
         if resume:
-            frozen = ("schema_version", "purpose", "models", "model_order", "benchmark", "budget", "source", "runtime",
+            frozen = ("schema_version", "purpose", "models", "model_order", "benchmark", "budget", "source", "runtime", "experiment",
                       "run_order", "records")
             if any(manifest.get(key) != expected.get(key) for key in (*frozen, "protocol_version", "modes")):
                 raise ValueError("Saved schedule or runtime differs from the requested resume")
@@ -333,8 +285,7 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
                      workspace_id=f"{manifest['run_id']}/{trial_id}/attempt-{attempt}")
         identity = {"run_id": manifest["run_id"], "task_id": trial["task_id"], "trial_id": trial_id,
                     "arm": trial["mode"], "model": model, "attempt": attempt}
-        if "protocol_version" in trial:
-            identity.update({field: trial[field] for field in ("protocol_version", "plan_scope", "framework_family")})
+        identity.update({field: trial[field] for field in ("protocol_version", "plan_scope", "framework_family")})
 
         def checkpoint(record):
             status = trial_status(record) if record.get("outcome") is not None else trial["status"]
@@ -347,9 +298,8 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
             record = await run_one(
                 rows[trial["task_id"]], client, mode=trial["mode"], workspace_id=trial["workspace_id"],
                 model_settings=manifest["models"][model],
-                max_input_bytes=manifest["budget"]["max_input_bytes_per_request"], save=checkpoint,
-                executor_limit=trial["executor_limit"], planner_limit=trial.get("planner_limit"),
-                return_every=trial.get("return_every"), protocol_version=trial.get("protocol_version"),
+                context_window=manifest["budget"]["context_window"], save=checkpoint,
+                executor_limit=trial["executor_limit"], protocol_version=trial["protocol_version"],
             )
             trial.update(status=trial_status(record), finished_at=record["events"][-1]["timestamp"])
             if error := checkpoint_error(record, trial["status"]):
@@ -397,8 +347,8 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
 
 
 async def run_benchmark(run_dir, data_dir, gamefiles, api_key, *, concurrency=CONCURRENCY, resume=False,
-                        split=SPLIT, task_id=None, legacy=False, model_order=None, model_settings=None):
-    protocol = requested_protocol(run_dir, resume, legacy)
+                        split=SPLIT, task_id=None, model_order=None, model_settings=None, context_window=None):
+    protocol = requested_protocol(run_dir, resume)
     if task_id is None and split != SPLIT:
         raise ValueError("Selecting a non-test split requires one --task-id")
     selection = {"task_id": task_id} if task_id is not None else {}
@@ -425,7 +375,7 @@ async def run_benchmark(run_dir, data_dir, gamefiles, api_key, *, concurrency=CO
             slot.load_task(row)
     await run_matrix(run_dir, rows, dataset, api_key, run_one=partial(run_matched_trial, pool),
                      concurrency=concurrency, resume=resume, model_order=model_order, model_settings=model_settings,
-                     protocol_version=protocol)
+                     protocol_version=protocol, context_window=context_window)
 
 
 def main(argv=None):
@@ -436,7 +386,6 @@ def main(argv=None):
     parser.add_argument("--split", choices=("dev", "test"), default=SPLIT)
     parser.add_argument("--task-id", help="Run only this task from the selected split.")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="Recipe YAML with toolkit overrides.")
-    parser.add_argument("--legacy", action="store_true", help="Run the historical four-framework protocol.")
     parser.add_argument("--concurrency", type=int, default=CONCURRENCY, help=f"Simultaneous trials (1–{MAX_CONCURRENCY}).")
     parser.add_argument("--resume", action="store_true", help="Restart unfinished trials or transient API failures once.")
     args = parser.parse_args(argv)
@@ -450,8 +399,9 @@ def main(argv=None):
     try:
         asyncio.run(run_benchmark(args.run_dir.resolve(), args.data_dir.resolve(), args.gamefiles.resolve(), api_key,
                                   concurrency=args.concurrency, resume=args.resume, split=args.split,
-                                  task_id=args.task_id, legacy=args.legacy, model_settings=model_settings,
-                                  model_order=read_yaml_mapping(args.config).get("models")))
+                                  task_id=args.task_id, model_settings=model_settings,
+                                  model_order=read_yaml_mapping(args.config).get("models"),
+                                  context_window=load_context_window(args.config)))
     except KeyboardInterrupt:
         parser.exit(130, "Benchmark interrupted.\n")
     except Exception as error:

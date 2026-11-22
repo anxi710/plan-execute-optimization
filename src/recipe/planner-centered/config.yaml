@@ -7,13 +7,13 @@ models:
 toolkit:
   planner_generation:
     model_name: null
-    api_base: https://agi.tongji.edu.cn/v1
-    api_key: null
+    api_base: http://127.0.0.1:3425/v1/magpie/native/tongji/v1
+    api_key: magpie
     thinking: null
     reasoning_effort: none
   executor:
     model_name: DeepSeek-V4.1-Flash
-    api_base: https://agi.tongji.edu.cn/v1
-    api_key: null
+    api_base: http://127.0.0.1:3425/v1/magpie/native/tongji/v1
+    api_key: magpie
     thinking: null
     reasoning_effort: none

@@ -23,13 +23,13 @@ from harbor.models.task.verifier_mode import VerifierEnvironmentMode, resolve_ta
 from harbor.models.trial.config import AgentConfig, EnvironmentConfig, TaskConfig, TrialConfig
 from harbor.trial.trial import Trial
 from toolkit.envs.base import BaseEnv
-from toolkit.frameworks import run_framework
+from toolkit.frameworks import FRAMEWORK_PROTOCOL, run_framework
 from toolkit.prompts import TERMINALBENCH_EXECUTOR_TEMPLATE, render_executor_prompt
 from toolkit.rollout.state import State
 from toolkit.rollout.terminalbench import load_terminalbench_trial
 from toolkit.tasks.terminalbench import TerminalBenchTask
 from toolkit.utils.files import read_yaml_mapping, write_json
-from run import CONFIG_PATH, load_model_settings
+from run import CONFIG_PATH, load_context_window, load_model_settings
 
 
 RELEASE = "v4.1.0"
@@ -58,8 +58,6 @@ REVIEWED_TASK_VERSIONS = {
 }
 TASK_COUNT = 66
 EXECUTOR_LIMIT = 40
-RETURN_EVERY = 4
-MAX_INPUT_BYTES = 131_072
 COMMAND_TIMEOUT = 30
 OUTPUT_LIMIT = 2_000
 OFFLINE_COMPOSE = Path(__file__).with_name("terminal-compose-offline.yaml")
@@ -635,9 +633,7 @@ async def run_terminal_trial(root, trials_dir, *, task_key=MUSIC_TASK, **runner_
         record["harbor"]["agent_dockerfile"] = str(trial.paths.trial_dir / f"{prefix}-environment-offline.Dockerfile")
     if task_key == COQ_TASK:
         record["harbor"]["prepared_images"] = {phase: image_id for phase, (_, image_id) in COQ_IMAGES.items()}
-    assessable = stop["reason"] != "runtime_error" and not (
-        record.get("protocol_version") and stop["reason"] == "protocol_error"
-    )
+    assessable = stop["reason"] not in {"runtime_error", "protocol_error"}
     if imported["reward"] is None and assessable:
         runner_options["save"](record)
         raise HarborVerifierUnavailable(f"See {trial.paths.result_path} for verifier details")
@@ -662,14 +658,6 @@ def scripted_model(texts):
         return {"text": next(values), "finish_reason": "stop", "model": "scripted-preflight", "usage": None}
 
     return complete
-
-
-def decision(stage, refs):
-    mode = "delegate" if stage else "finish"
-    body = {"decision": mode, "hypotheses": [], "remaining_work": [], "evidence_refs": refs}
-    if stage:
-        body["stage_objective"] = stage
-    return f"<plan>Check the reviewed workspace and confirm persistence.</plan><decision>{json.dumps(body)}</decision>"
 
 
 async def preflight(root, output, task_key=MUSIC_TASK):
@@ -774,21 +762,29 @@ async def preflight(root, output, task_key=MUSIC_TASK):
         absence_check = "test ! -d /tests"
     record = await run_terminal_trial(
         root, output / "harbor", task_key=task_key,
-        mode="pc", workspace_id="reviewed-terminal-preflight", executor_limit=3,
-        planner_limit=3, return_every=1, save=save,
+        mode="pc-s", workspace_id="reviewed-terminal-preflight", executor_limit=3,
+        protocol_version=FRAMEWORK_PROTOCOL, save=save,
         planner=scripted_model([
-            decision("Check the public input and create a persistence marker.", [1]),
-            decision("Check that the marker still exists in this stage.", [1]),
-            decision(None, [1]),
+            json.dumps({"assessment": "Check the reviewed workspace and create a persistence marker.",
+                        "stage_objective": "Check the public input and create a persistence marker.",
+                        "completion_condition": "The input checks pass and the marker exists.",
+                        "evidence_refs": [1]}),
+            json.dumps({"assessment": "The first command established the marker.",
+                        "stage_objective": "Check that the marker still exists in this stage.",
+                        "completion_condition": "The command prints workspace retained.",
+                        "previous_stage_status": "verified", "evidence_refs": [2]}),
+            json.dumps({"assessment": "The second command confirmed persistence.", "evidence_refs": [3]}),
+            "Assessment: The Executor submitted the workspace for native verification.",
         ]),
         executor=scripted_model([
             f"Action: test -f {public_input} && {absence_check} && test ! -d /solution "
             "&& test -z \"${OPENAI_API_KEY:-}\" && printf persistent > .planner-preflight",
             f'Action: test "$(cat .planner-preflight)" = persistent && {write_dummy} '
             '&& printf "workspace retained\\n"',
+            "Action: finish",
         ]),
     )
-    actions = [event for event in record["events"] if event["type"] == "tool_event"]
+    actions = [event for event in record["events"] if event["type"] == "tool_event" and event["dispatched"]]
     requests = [event for event in record["events"] if event["type"] == "execution_request"]
     assert len(actions) == 2 and all(event["valid"] for event in actions)
     if task_key == COQ_TASK:
@@ -820,11 +816,12 @@ def selected_task_roots(root, task_key, finance_root, additional_task_roots):
 
 
 async def run_benchmark(root, run_dir, api_key, *, task_key=MUSIC_TASK, finance_root=None,
-                        additional_task_roots=(), resume=False, legacy=False, model_settings=None, model_order=None):
+                        additional_task_roots=(), resume=False, model_settings=None, model_order=None,
+                        context_window=None):
     from benchmark import requested_protocol, run_matrix
     from run import model_call
 
-    protocol = requested_protocol(run_dir, resume, legacy)
+    protocol = requested_protocol(run_dir, resume)
     task_roots = selected_task_roots(root, task_key, finance_root, additional_task_roots)
     rows = {}
     for key, task_root in task_roots.items():
@@ -840,26 +837,22 @@ async def run_benchmark(root, run_dir, api_key, *, task_key=MUSIC_TASK, finance_
         "data_version": RELEASE, "source_commit": SOURCE_COMMIT, "canonical_task_count": TASK_COUNT,
         "data_dir": str(task_roots[task_key]), "tasks": list(rows.values()),
         "runtime_packages": ["harbor", "openai", "PyYAML"],
-        "return_every": RETURN_EVERY, "max_input_bytes": MAX_INPUT_BYTES,
     }
     if len(task_roots) > 1:
         dataset["task_roots"] = {key: str(task_root) for key, task_root in task_roots.items()}
 
-    async def run_one(row, client, *, model_settings, max_input_bytes, executor_limit, planner_limit,
-                      return_every, mode, protocol_version=None, **options):
-        model_options = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
+    async def run_one(row, client, *, model_settings, context_window, executor_limit,
+                      mode, protocol_version=FRAMEWORK_PROTOCOL, **options):
         key = row["task_id"]
         return await run_terminal_trial(
             task_roots[key], run_dir / "harbor", task_key=key,
-            mode=mode, executor_limit=executor_limit, planner_limit=planner_limit, return_every=return_every,
-            protocol_version=protocol_version,
-            planner=model_call(client, "planner", planner_limit, **model_options) if mode != "eo" else None,
-            executor=model_call(client, "executor", executor_limit if return_every is not None else None,
-                                **model_options), **options,
+            mode=mode, executor_limit=executor_limit, context_window=context_window, protocol_version=protocol_version,
+            planner=model_call(client, "planner", model_settings=model_settings) if mode != "eo" else None,
+            executor=model_call(client, "executor", model_settings=model_settings), **options,
         )
 
     await run_matrix(run_dir, rows, dataset, api_key, run_one=run_one, concurrency=1, resume=resume, model_order=model_order,
-                     protocol_version=protocol, model_settings=model_settings)
+                     protocol_version=protocol, model_settings=model_settings, context_window=context_window)
 
 
 def main(argv=None):
@@ -874,7 +867,6 @@ def main(argv=None):
     action.add_argument("--preflight-output", type=Path, help="New output for the scripted native preflight.")
     action.add_argument("--run-dir", type=Path, help="Output for the reviewed real-model score matrix.")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--legacy", action="store_true", help="Run the historical four-framework protocol.")
     args = parser.parse_args(argv)
     if args.preflight_output is not None and (args.finance_bench_root is not None or args.additional_task_root):
         parser.error("Additional task roots require --run-dir")
@@ -893,7 +885,7 @@ def main(argv=None):
         asyncio.run(run_benchmark(
             args.terminal_bench_root, args.run_dir.resolve(), api_key, task_key=args.task_id,
             finance_root=args.finance_bench_root, additional_task_roots=args.additional_task_root,
-            resume=args.resume, legacy=args.legacy, model_settings=model_settings,
+            resume=args.resume, model_settings=model_settings, context_window=load_context_window(args.config),
             model_order=read_yaml_mapping(args.config).get("models"),
         ))
 

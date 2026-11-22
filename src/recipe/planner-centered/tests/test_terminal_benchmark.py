@@ -27,7 +27,8 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
             config.write_text(
                 "models: [custom-model]\ntoolkit:\n  planner_generation:\n    model_name: planner-model\n"
                 "    api_base: http://planner.test/v1\n    api_key: planner-key\n  executor:\n"
-                "    model_name: custom-model\n    api_base: http://executor.test/v1\n    api_key: executor-key\n",
+                "    model_name: custom-model\n    api_base: http://executor.test/v1\n    api_key: executor-key\n"
+                "  context_window:\n    max_input_tokens: 12345\n",
                 encoding="utf-8",
             )
             with (patch.dict(os.environ, {}, clear=True),
@@ -35,6 +36,7 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
                 terminal.main(["--config", str(config), "--terminal-bench-root", directory, "--run-dir", directory])
             self.assertEqual(dispatch.await_args.args[2], {"planner": "planner-key", "executor": "executor-key"})
             self.assertEqual(dispatch.await_args.kwargs["model_order"], ["custom-model"])
+            self.assertEqual(dispatch.await_args.kwargs["context_window"], {"max_input_tokens": 12345})
             self.assertEqual(dispatch.await_args.kwargs["model_settings"]["planner"]["base_url"], "http://planner.test/v1")
             self.assertEqual(dispatch.await_args.kwargs["model_settings"]["planner"]["model"], "planner-model")
             self.assertEqual(dispatch.await_args.kwargs["model_settings"]["executor"]["base_url"], "http://executor.test/v1")
@@ -140,25 +142,29 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
     async def test_reviewed_manifest_dispatches_each_task_into_its_own_checkout(self):
         roots = {key: Path(key).resolve() for key in terminal.REVIEWED_TASK_VERSIONS}
         run_dir = Path("unused-dry-run")
+        window = {"max_input_tokens": 12345}
 
         def checked_task(root, task_id):
             self.assertEqual(root, roots[task_id])
             return root, SimpleNamespace(observation="Local fixture", version=terminal.REVIEWED_TASK_VERSIONS[task_id])
 
         async def check_matrix(path, rows, dataset, api_key, *, run_one, concurrency, resume, protocol_version,
-                               model_settings, model_order):
+                               model_settings, model_order, context_window):
             self.assertIsNone(model_settings)
             self.assertIsNone(model_order)
             self.assertEqual((path, api_key, concurrency, resume), (run_dir, "unused", 1, True))
             self.assertEqual(dataset["selection"], "reviewed_subset")
             self.assertEqual(dataset["canonical_task_count"], 66)
             self.assertEqual(dataset["task_roots"], {key: str(root) for key, root in roots.items()})
+            self.assertNotIn("max_input_bytes", dataset)
+            self.assertNotIn("return_every", dataset)
+            self.assertIs(context_window, window)
             self.assertEqual(list(rows), list(roots))
             manifest = benchmark.scheduled_manifest(dataset, "terminal-test", protocol_version=protocol_version)
             self.assertEqual(len(manifest["trials"]), 360)
             for row in rows.values():
-                await run_one(row, None, mode="eo", model_settings={}, max_input_bytes=128, executor_limit=40,
-                              planner_limit=None, return_every=None)
+                await run_one(row, None, mode="eo", model_settings={}, context_window=context_window,
+                              executor_limit=40, workspace_id="offline-terminal", save=lambda _: None)
 
         with (patch.object(benchmark, "run_matrix", new=check_matrix),
               patch.object(benchmark, "requested_protocol", return_value=benchmark.FRAMEWORK_PROTOCOL),
@@ -166,7 +172,7 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
               patch.object(terminal, "reviewed_task", side_effect=checked_task),
               patch.object(terminal, "reviewed_wheels") as wheels,
               patch.object(terminal, "verify_reviewed_images") as images,
-              patch.object(run, "model_call", return_value=None),
+              patch.object(run, "model_call", return_value=None) as model_factory,
               patch.object(terminal, "run_terminal_trial", new_callable=AsyncMock) as dispatch):
             await terminal.run_benchmark(
                 roots[terminal.MUSIC_TASK], run_dir, "unused", finance_root=roots[terminal.FINANCE_TASK],
@@ -175,7 +181,7 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
                     terminal.VF2_TASK, terminal.BATCHED_TASK, terminal.COQ_TASK, terminal.KS_TASK, terminal.DRIFT_TASK,
                     terminal.CARGO_TASK, terminal.ONTOLOGY_TASK, terminal.WAL_TASK, terminal.RISK_TASK,
                 )],
-                resume=True,
+                resume=True, context_window=window,
             )
         self.assertEqual(wheels.call_args_list, [call(roots[key], key) for key in terminal.WHEELHOUSE_BASES])
         images.assert_called_once()
@@ -184,3 +190,41 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(entry.kwargs["task_key"], entry.args[0]) for entry in dispatch.await_args_list], list(roots.items()),
         )
+        self.assertTrue(all(entry.kwargs["context_window"] is window for entry in dispatch.await_args_list))
+        self.assertTrue(all(entry.kwargs["protocol_version"] == terminal.FRAMEWORK_PROTOCOL
+                            for entry in dispatch.await_args_list))
+        self.assertEqual(model_factory.call_args_list, [call(None, "executor", model_settings={})] * len(roots))
+
+    async def test_scripted_preflight_uses_current_pc_stages_and_executor_submission(self):
+        environment = SimpleNamespace(exec=AsyncMock(return_value=SimpleNamespace(
+            return_code=0, stdout="workspace retained\n", stderr="",
+        )))
+        records = []
+
+        async def trial(_root, directory, *, task_key, **options):
+            record = await terminal.run_framework(
+                env=terminal.TerminalWorkspace(environment, "Inspect the public input.", options["executor_limit"]),
+                goal="Inspect the public input.", benchmark="terminalbench", external_verifier=True, **options,
+            )
+            record["outcome"] = {"reason": record["events"][-1]["reason"], "success": False, "reward": 0.0}
+            record["events"].append({"type": "verifier", **record["outcome"]})
+            record["harbor"] = {}
+            for field in ("result", "lock", "verifier_dockerfile"):
+                path = directory.parent / field
+                path.touch()
+                record["harbor"][field] = str(path)
+            records.append(record)
+            return record
+
+        with (TemporaryDirectory() as directory,
+              patch.object(terminal, "run_terminal_trial", new=trial), patch("builtins.print")):
+            await terminal.preflight(Path(directory), Path(directory) / "output")
+        record, = records
+        self.assertEqual(record["mode"], "pc-s")
+        self.assertEqual(record["protocol_version"], terminal.FRAMEWORK_PROTOCOL)
+        self.assertEqual(environment.exec.await_count, 2)
+        stop = next(event for event in record["events"] if event["type"] == "stop")
+        self.assertEqual((stop["reason"], stop["real_environment_steps"]), ("task_finish", 2))
+        requests = [event for event in record["events"] if event["type"] == "execution_request"]
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(event["assessment"] for event in record["events"] if event["type"] == "planner_decision"))

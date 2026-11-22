@@ -1,3 +1,6 @@
+context_window:
+  max_input_tokens: null
+
 planner_generation:
   model_name: null
   api_base: null

@@ -31,13 +31,14 @@ class RolloutSession:
             self.state.history[0]["content"] = prompt
         return prompt, self.state
 
-    async def call(self, role, messages, **model_options):
+    async def call(self, role, messages, *, context_metadata=None, **model_options):
         self.phase = "request"
         self.attempts[role] += 1
         messages = deepcopy(messages)
         request_options = {"request_options": deepcopy(model_options)} if model_options else {}
+        context = {"context_window": deepcopy(context_metadata)} if context_metadata is not None else {}
         event = self.log.emit("model_call", role=role, messages=messages, response=None, error=None,
-                              status="pending", seconds=None, **request_options)
+                              status="pending", seconds=None, **context, **request_options)
         started = perf_counter()
         try:
             response = await self.models[role](messages, **model_options)

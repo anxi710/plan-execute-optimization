@@ -11,13 +11,14 @@ from toolkit.prompts.frameworks import (
     PC_INITIAL_PROMPT, PC_MONITOR_PROMPT, PC_SUB_PROMPT, PE_INITIAL_PLAN_PROMPT, PE_REPLAN_PROMPT,
     PE_STATIC_PLAN_PROMPT, PE_SUB_PLAN_PROMPT, PLANNER_JSON_FORMAT,
 )
+from toolkit.models.context import ContextRecord, ContextWindow, ContextWindowExceeded
 from toolkit.rollout.log import EventLog
 from toolkit.rollout.session import RolloutSession
 
 from .tools import FunctionTool, ToolProtocolError, invoke_tool
 
 
-FRAMEWORK_PROTOCOL = "two-phase-v2"
+FRAMEWORK_PROTOCOL = "two-phase-v3"
 PLAN_SCOPES = {"eo": None, "pe-s": "full", "pe-d-f": "full", "pe-d-s": "sub", "pc-s": "sub", "pc-f": "full"}
 FRAMEWORK_MODES = tuple(PLAN_SCOPES)
 
@@ -26,7 +27,7 @@ _ID = {"type": "integer", "minimum": 1}
 _REFS = {"type": "array", "items": _ID}
 _LIST = {"type": "array", "items": _TEXT}
 _JUDGMENT = {
-    "thinking_summary": {**_TEXT, "description": "One public sentence on supported facts and uncertainty."},
+    "assessment": {**_TEXT, "description": "A brief assessment of the current evidence and active phase."},
     "evidence_refs": {**_REFS, "description": "Only use observation numbers visible in your request."},
 }
 _STAGE_FIELDS = {
@@ -62,7 +63,7 @@ def _plan_request(scope, handler):
 def _plan_schema(scope, *, pc, initial):
     plan = {"full_plan": _FULL_PLAN} if scope == "full" else _STAGE_FIELDS
     fields = {**_JUDGMENT, **plan}
-    required = ["thinking_summary"]
+    required = ["assessment"]
     if pc:
         if scope == "full":
             fields.update(current_subplan_id=_ID, revision_reason=_TEXT)
@@ -147,7 +148,7 @@ class FrameworkRun:
     """Keep one run's planning, evidence and execution state."""
 
     def __init__(self, *, mode, env, planner, executor, goal, workspace_id, executor_limit,
-                 save, benchmark, external_verifier):
+                 save, benchmark, external_verifier, context_window=None):
         self.mode = mode
         self.scope = PLAN_SCOPES[mode]
         self.pc = mode.startswith("pc")
@@ -171,6 +172,9 @@ class FrameworkRun:
         self.session = RolloutSession(env, {"planner": planner, "executor": executor}, log=self.log,
                                       count_dispatched=True)
         self.instruction = getattr(env, "instruction", None) or load_executor_instruction(benchmark)
+        self.context_windows = {role: ContextWindow(**(context_window or {})) for role in ("planner", "executor")}
+        self.context_metadata = {}
+        self.record["context_window"] = {"max_input_tokens": self.context_windows["executor"].max_input_tokens}
         self.observations = {}
         self.last_feedback = None
         self.verified_stages = []
@@ -231,20 +235,77 @@ class FrameworkRun:
             message["content"] = ""
         return message
 
-    def _public_history(self):
-        lines = [self._observation(self.observations[1])]
+    def _history_units(self):
+        units = [{"record_id": self.observations[1]["event_id"], "events": [self.observations[1]]}]
+        by_call = {}
         for event in self.log.events:
             if event["type"] == "model_call" and event.get("role") == "executor" and event.get("response"):
+                unit = {"record_id": event["event_id"], "events": [event]}
+                by_call[event["event_id"]] = unit
+                units.append(unit)
+            elif event["type"] in {"tool_event", "model_tool_result"}:
+                by_call[event["model_event_id"]]["events"].append(event)
+        return units
+
+    def _history_record(self, unit, *, planner):
+        lines, refs = [], []
+        for event in unit["events"]:
+            kind = event["type"]
+            if kind == "model_call":
                 response = event["response"]
                 if response.get("text"):
                     lines.append(f"Executor reply:\n{response['text']}")
                 for call in response.get("tool_calls", []):
                     function = call["function"]
                     lines.append(f"Executor planning request: {function['name']}({function['arguments']})")
-            elif event["type"] == "tool_event":
-                lines.append(self._observation(event) if "observation_id" in event else
-                             f"Local action feedback: {event['observation']}")
-        return "\n\n".join(lines)
+            elif kind in {"initial_observation", "tool_event"}:
+                if "observation_id" in event:
+                    refs.append(event["observation_id"])
+                    lines.append(self._observation(event))
+                else:
+                    lines.append(f"Local action feedback: {event['observation']}")
+            elif kind == "model_tool_result" and not planner:
+                lines.append(f"Planning tool result:\n{event['content']}")
+        return ContextRecord(unit["record_id"], "\n\n".join(lines), tuple(refs))
+
+    def _history_context(self, role, blocks, *, required=(), planning=False, actions=None):
+        units = self._history_units()
+        records = [self._history_record(unit, planner=role == "planner") for unit in units]
+        latest_ref = max(self.observations)
+        protected_refs = {latest_ref, *required}
+        protected = {record.record_id for record in records if protected_refs.intersection(record.observation_ids)}
+        paired, paired_id = [], None
+        latest = units[-1]
+        protected.add(latest["record_id"])
+        call = latest["events"][0]
+        if call["type"] == "model_call" and call["response"].get("tool_calls"):
+            if role == "executor":
+                results = [event for event in latest["events"] if event["type"] == "model_tool_result"]
+                paired = [self._executor_message(call), *[
+                    {"role": "tool", "tool_call_id": event["tool_call_id"], "content": event["content"]}
+                    for event in results
+                ]]
+                paired_id = latest["record_id"]
+
+        def render(selected):
+            history = "\n\n".join(record.text for record in selected if record.record_id != paired_id)
+            title = "Public interaction history:" if role == "planner" else "Interaction history:"
+            content = "\n\n".join([*blocks, title + "\n" + history])
+            if actions is not None:
+                content = render_action_feedback(content, actions)
+            return [{"role": "user", "content": content}, *paired]
+
+        options = {"tools": [_plan_request(self.scope, self._request_plan).schema]} if planning else {}
+        try:
+            messages, metadata, visible = self.context_windows[role].prepare(
+                records, render, protected=protected, model_options=options,
+            )
+        except ContextWindowExceeded as error:
+            self.log.emit("context_window_error", role=role, error=type(error).__name__,
+                          context_window=error.metadata, messages=error.messages, dispatched=False)
+            raise
+        self.context_metadata[role] = metadata
+        return messages, visible
 
     def _executor_context(self, *, planning):
         blocks = [self.instruction, self._goal()]
@@ -257,38 +318,18 @@ class FrameworkRun:
                           f"Completion condition: {self.stage['completion_condition']}")
         elif self.plan:
             blocks.append(f"Current advisory plan:\n{_numbered_plan(self.plan)}")
-        blocks.append("Complete interaction history:\n" + self._observation(self.observations[1]))
-        messages = [{"role": "user", "content": "\n\n".join(blocks)}]
-        for event in self.log.events:
-            if event["type"] == "model_call" and event.get("role") == "executor" and event.get("response"):
-                messages.append(self._executor_message(event))
-            elif event["type"] == "tool_event":
-                content = (self._observation(event) if "observation_id" in event else
-                           f"Local action feedback: {event['observation']}")
-                messages.append({"role": "user", "content": content})
-            elif event["type"] == "model_tool_result":
-                messages.append({"role": "tool", "tool_call_id": event["tool_call_id"],
-                                 "content": event["content"]})
         get_actions = getattr(self.session.env, "get_available_actions", None)
         actions = get_actions() if get_actions else None
-        if actions is not None:
-            latest = next(message for message in reversed(messages) if message["role"] == "user")
-            latest["content"] = render_action_feedback(latest["content"], actions)
-        return messages, set(self.observations)
+        return self._history_context("executor", blocks, planning=planning, actions=actions)
 
-    def _planner_context(self, prompt, *, reason=None):
-        body = [
-            FRAMEWORK_PLANNER_PROMPT.format(benchmark=self.benchmark),
-            prompt,
-            self._goal(),
-        ]
+    def _planner_context(self, prompt, *, reason=None, required=()):
+        body = [FRAMEWORK_PLANNER_PROMPT.format(benchmark=self.benchmark), prompt, self._goal()]
         if self.plan:
             body.append(f"Current full-plan:\n{_numbered_plan(self.plan)}")
         if self.stage:
-            stage = self.stage
-            cursor = f" #{stage['id']}" if "id" in stage else ""
-            body.append(f"Active sub-plan{cursor}: {stage['stage_objective']}\n"
-                        f"Completion condition: {stage['completion_condition']}")
+            cursor = f" #{self.stage['id']}" if "id" in self.stage else ""
+            body.append(f"Active sub-plan{cursor}: {self.stage['stage_objective']}\n"
+                        f"Completion condition: {self.stage['completion_condition']}")
         if self.revision_reason:
             body.append(f"Last route revision: {self.revision_reason}")
         if self.verified_stages:
@@ -304,15 +345,22 @@ class FrameworkRun:
             body.append("Estimated work remaining:\n- " + "\n- ".join(self.remaining_work))
         if reason:
             body.append(f"Trigger: {reason}")
-        body.append("Complete public interaction history:\n" + self._public_history())
-        return [{"role": "user", "content": "\n\n".join(body)}], set(self.observations)
+        messages, visible = self._history_context("planner", body, required=required)
+        visible.update(ref for item in self.verified_stages for ref in item["evidence_refs"])
+        return messages, visible
+
+    async def _call_model(self, role, messages, **options):
+        event = await self.session.call(role, messages, context_metadata=self.context_metadata[role], **options)
+        self.context_windows[role].observe(event["context_window"], event["response"].get("usage"))
+        self.log.flush()
+        return event
 
     def _tool_result(self, event, tool, content):
         self.log.emit("model_tool_result", name=tool["function"]["name"], tool_call_id=tool["id"], content=content,
                       model_event_id=event["event_id"])
 
     def _planner_log(self, call, decision, summary, refs, *, phase, **fields):
-        self.log.emit("planner_decision", decision=decision, thinking_summary=summary, evidence_refs=refs,
+        self.log.emit("planner_decision", decision=decision, assessment=summary, evidence_refs=refs,
                       planner_phase=phase, model_event_id=call["event_id"],
                       stage_objective=self.stage["stage_objective"] if self.stage else None,
                       current_subplan_id=self.stage.get("id") if self.stage else None,
@@ -327,12 +375,12 @@ class FrameworkRun:
         if re.search(r"^Action:", event["response"].get("text") or "", flags=re.MULTILINE):
             raise ToolProtocolError("mixed_action_and_tool_call")
         reason = _text(params.get("reason"), "reason")
-        _refs(params, visible)
+        refs = _refs(params, visible)
         self._no_action()
-        guidance = await self._plan_pe(initial=False, reason=reason)
+        guidance = await self._plan_pe(initial=False, reason=reason, required=refs)
         return self._tool_result(event, tool, guidance)
 
-    async def _plan_pe(self, *, initial, reason=None):
+    async def _plan_pe(self, *, initial, reason=None, required=()):
         phase = INITIAL_SUB_PLAN_GENERATION if initial else CONTINUOUS_EXECUTION_MONITORING
         task = ("Produce a numbered plan covering the remaining whole task." if self.scope == "full"
                 else PE_SUB_PLAN_PROMPT)
@@ -343,10 +391,11 @@ class FrameworkRun:
             f"{phase}\n\n{prompt}\n{task}\n\n"
             + PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
             reason=f"Executor requests planning: {reason}" if reason else "Initial planning before execution.",
+            required=required,
         )
-        planner = await self.session.call("planner", messages)
+        planner = await self._call_model("planner", messages)
         choice = _planner_json(planner)
-        summary = _text(choice.get("thinking_summary"), "thinking_summary")
+        summary = _text(choice.get("assessment"), "assessment")
         refs = _refs(choice, visible)
         keep = choice.get("keep", False)
         if type(keep) is not bool or (keep and initial):
@@ -405,7 +454,7 @@ class FrameworkRun:
             messages, visible = self._executor_context(planning=planning)
             tools = [_plan_request(self.scope, partial(self._request_plan, visible=visible))] if planning else []
             options = {"tools": [tool.schema for tool in tools]} if tools else {}
-            call = await self.session.call("executor", messages, **options)
+            call = await self._call_model("executor", messages, **options)
             if call["response"].get("tool_calls"):
                 if not planning:
                     raise ToolProtocolError("unavailable_tool")
@@ -441,9 +490,9 @@ class FrameworkRun:
             + PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
             reason=self.last_feedback,
         )
-        call = await self.session.call("planner", messages)
+        call = await self._call_model("planner", messages)
         params = _planner_json(call)
-        summary = _text(params.get("thinking_summary"), "thinking_summary")
+        summary = _text(params.get("assessment"), "assessment")
         refs = _refs(params, visible)
         stage, plan, reason = self._pc_stage(params, initial=initial)
         previous_stage = self.stage
@@ -457,7 +506,7 @@ class FrameworkRun:
         remaining = _list(params, "remaining_work", self.remaining_work)
         if previous_stage and changed:
             status = status or "replaced"
-            closure = {"status": status, "stage": previous_stage, "thinking_summary": summary, "evidence_refs": refs}
+            closure = {"status": status, "stage": previous_stage, "assessment": summary, "evidence_refs": refs}
             self.log.emit("stage_result", **closure)
             if status == "verified":
                 self.verified_stages.append({"stage": previous_stage, "evidence_refs": refs})
@@ -479,11 +528,11 @@ class FrameworkRun:
                 f"{CONTINUOUS_EXECUTION_MONITORING}\n\n{TERMINAL_REVIEW_PROMPT}",
                 reason="The run has ended. Assess the last public feedback.",
             )
-            call = await self.session.call("planner", messages)
+            call = await self._call_model("planner", messages)
             if call["response"].get("tool_calls") or call["response"].get("finish_reason") == "length":
                 raise ToolProtocolError("invalid_terminal_review")
-            text = _text(call["response"].get("text"), "thinking_summary")
-            summary = _text(text.removeprefix("Judgment:"), "thinking_summary")
+            text = _text(call["response"].get("text"), "assessment")
+            summary = _text(text.removeprefix("Assessment:"), "assessment")
             self._planner_log(call, "finish", summary, [], phase=CONTINUOUS_EXECUTION_MONITORING, read_only=True)
         except Exception as error:
             self.log.emit("decision_error", error=_error_name(error), return_reason=self.stop_reason)

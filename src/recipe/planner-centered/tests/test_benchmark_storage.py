@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import benchmark
 import run
-from run import PromptBudgetExceeded, model_call
+from run import model_call
 from toolkit.frameworks import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, PLAN_SCOPES
 from toolkit.envs.base import ActionResult, BaseEnv
 from report import accumulate_attempt_cost, benchmark_token_count, matched_trials, render_benchmark
@@ -64,7 +64,7 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
             config = Path(directory) / "config.yaml"
             for explicit_role, section in (("planner", "planner_generation"), ("executor", "executor")):
                 with self.subTest(explicit_role=explicit_role):
-                    config.write_text(f"toolkit:\n  {section}:\n    api_key: configured-test-key\n",
+                    config.write_text(f"toolkit:\n  planner_generation:\n    api_key: null\n  executor:\n    api_key: null\n  {section}:\n    api_key: configured-test-key\n",
                                       encoding="utf-8")
                     settings, keys = run.load_model_settings(config)
                     self.assertEqual(keys[explicit_role], "configured-test-key")
@@ -195,7 +195,7 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                 for _url, key in connections.values():
                     self.assertNotIn(key, path.read_text(encoding="utf-8"))
 
-    async def test_tool_protocol_model_adapter_preserves_tool_call_and_measures_full_request(self):
+    async def test_tool_protocol_model_adapter_preserves_tool_call(self):
         tool = {"type": "function", "function": {"name": "request_plan", "parameters": {"type": "object"}}}
         choice = {"type": "function", "function": {"name": "request_plan"}}
         call = {"id": "call-1", "type": "function", "function": {"name": "request_plan", "arguments": "{}"}}
@@ -212,10 +212,6 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["text"], "")
         payload = client.complete.await_args.kwargs
         self.assertEqual((payload["tools"], payload["tool_choice"]), ([tool], choice))
-        size = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        check = model_call(client, "executor", max_input_bytes=size - 1)
-        with self.assertRaises(PromptBudgetExceeded):
-            await check(messages, tools=[tool], tool_choice=choice)
         client.complete.assert_awaited_once()
 
     async def test_tool_protocol_single_task_dispatches_six_arms_without_role_limits(self):
@@ -225,9 +221,10 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
         base_url = run.MODEL_SETTINGS["executor"]["base_url"]
         modes = []
 
-        async def run_one(row, client, *, mode, model_settings, planner_limit, return_every, save, **kwargs):
+        async def run_one(row, client, *, mode, model_settings, context_window, save, **kwargs):
             self.assertIs(row, task)
-            self.assertEqual((planner_limit, return_every, kwargs["executor_limit"]), (None, None, 4))
+            self.assertEqual(kwargs["executor_limit"], 4)
+            self.assertEqual(context_window, {"max_input_tokens": 1234})
             self.assertEqual(model_settings["executor"]["model"], model)
             self.assertEqual(kwargs["protocol_version"], FRAMEWORK_PROTOCOL)
             modes.append(mode)
@@ -244,7 +241,8 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
               redirect_stdout(StringIO())):
             run_dir = Path(directory) / "run"
             await benchmark.run_matrix(run_dir, {"2": task}, dataset, "test-key", run_one=run_one,
-                                       concurrency=1, protocol_version=FRAMEWORK_PROTOCOL, model_order=(model,))
+                                       concurrency=1, protocol_version=FRAMEWORK_PROTOCOL, model_order=(model,),
+                                       context_window={"max_input_tokens": 1234})
             self.assertEqual(client_factory.call_args.kwargs["api_key"], "test-key")
             self.assertEqual(client_factory.call_args.kwargs["base_url"], base_url)
             manifest = read_json(run_dir / "manifest.json")
@@ -260,27 +258,6 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved["protocol_version"], FRAMEWORK_PROTOCOL)
                 self.assertEqual(saved["plan_scope"], PLAN_SCOPES[trial["mode"]])
 
-    async def test_historical_protocols_cannot_be_resumed_or_relabelled(self):
-        task = {"task_id": "2", "executor_limit": 4}
-        dataset = {"name": "ALFWorld", "tasks": [task]}
-        with (tempfile.TemporaryDirectory() as directory,
-              patch.object(benchmark, "AsyncChatClient") as client_factory):
-            run_dir = Path(directory)
-            write_json(run_dir / "trial.json", {"messages": ["Keep the historical request."]})
-            for historical in ("native-tools-v1", "two-phase-v1"):
-                write_json(run_dir / "manifest.json", {"protocol_version": historical})
-                original = {path.name: path.read_bytes() for path in run_dir.iterdir()}
-                with self.assertRaisesRegex(ValueError, "historical runs are read-only"):
-                    benchmark.requested_protocol(run_dir, resume=True)
-                run_one = AsyncMock()
-                for requested in (None, FRAMEWORK_PROTOCOL, historical):
-                    with self.subTest(historical=historical, requested=requested):
-                        with self.assertRaisesRegex(ValueError, "historical runs are read-only"):
-                            await benchmark.run_matrix(run_dir, {"2": task}, dataset, "unused", run_one=run_one,
-                                                       resume=True, protocol_version=requested)
-                client_factory.assert_not_called()
-                run_one.assert_not_awaited()
-                self.assertEqual({path.name: path.read_bytes() for path in run_dir.iterdir()}, original)
 
     async def test_alfworld_runner_preserves_two_phase_calls_and_replanning_receipt(self):
         class Environment(BaseEnv):
@@ -311,11 +288,11 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
         for mode in ("pe-d-f", "pc-s"):
             with self.subTest(mode=mode):
                 env, calls = Environment(), []
-                initial = {"thinking_summary": "Inspect the room.",
+                initial = {"assessment": "Inspect the room.",
                            **({"full_plan": [{"id": 1, **stage}]} if mode == "pe-d-f" else stage)}
                 replies = {
                     "planner": iter([json.dumps(initial),
-                                     json.dumps({"thinking_summary": "Continue.", **({"keep": True} if mode == "pe-d-f" else {})}),
+                                     json.dumps({"assessment": "Continue.", **({"keep": True} if mode == "pe-d-f" else {})}),
                                      "Judgment: The environment finished."]),
                     "executor": iter(["Action: inspect", *([request] if mode == "pe-d-f" else []), "Action: finish"]),
                 }
@@ -338,6 +315,7 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("constraints", record)
                 self.assertTrue(all("hard_constraints" not in event for event in record["events"]))
                 self.assertNotIn("Hard constraints", json.dumps(calls))
+                self.assertTrue(all(options["messages"][0]["role"] == "user" for _role, options in calls))
                 self.assertEqual(env.actions, ["inspect", "finish"])
                 self.assertTrue(record["outcome"]["success"])
                 expected = (["planner", "executor", "executor", "planner", "executor"] if mode == "pe-d-f"
@@ -424,17 +402,6 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
         accumulate_attempt_cost(cost, {})
         self.assertEqual(benchmark_token_count(cost, "total_tokens"), "未知")
 
-    def test_retry_budget_ignores_archived_startup_error_before_any_events(self):
-        with tempfile.TemporaryDirectory() as directory:
-            run = Path(directory)
-            trial = {"status": "unscored", "error": "APIConnectionError", "file": "trial.json",
-                     "archived_attempts": ["startup.json"]}
-            write_json(run / "startup.json", {"status": "error", "error": "OSError", "events": []})
-            write_json(run / "trial.json", {"status": "unscored", "events": [{"type": "model_call"}]})
-            self.assertTrue(benchmark.can_retry_trial(run, trial))
-            trial["archived_attempts"].append("model.json")
-            write_json(run / "model.json", {"status": "unscored", "events": [{"type": "model_call"}]})
-            self.assertFalse(benchmark.can_retry_trial(run, trial))
 
     async def test_model_selection_preserves_trial_identity_and_checks_resume(self):
         dataset = {"tasks": [{"task_id": "sample", "executor_limit": 4}], "compress_traces": True}
@@ -461,276 +428,77 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                 await benchmark.run_matrix(run_dir, rows, dataset, "unused", run_one=None, resume=True)
             run_pending.assert_awaited_once()
 
-    async def test_resume_and_report_read_both_trace_formats(self):
-        task = {"task_id": "example", "goal": "测量样品", "executor_limit": 4}
-        rows = {"example": task}
+    async def test_current_resume_preserves_scores_and_archived_costs(self):
+        task = {"task_id": "sample", "executor_limit": 4}
+        dataset = {"name": "Offline", "selection": "single_task", "tasks": [task]}
+        invoked = Counter()
 
-        async def run_one(_task, _client, *, mode, workspace_id, save, **_limits):
-            if mode == "eo" and workspace_id.endswith("/attempt-1"):
-                raise APIConnectionError
-            outcome = {"reason": "environment_done", "reward": 0.75, "success": False}
-            record = {
-                "mode": mode, "workspace_id": workspace_id, "outcome": outcome,
-                "events": [{"type": "stop", "timestamp": "end", "reason": outcome["reason"]},
-                           {"type": "verifier", "timestamp": "end", **outcome}],
-            }
+        async def run_one(_task, _client, *, mode, workspace_id, save, **_options):
+            invoked[mode] += 1
+            events = [{"event_id": 1, "timestamp": "start", "type": "model_call", "role": "executor",
+                       "messages": [{"role": "user", "content": "Task"}],
+                       "response": {"text": "Action: look", "usage": {"total_tokens": 10}}}]
+            if mode == "eo" and invoked[mode] == 1:
+                save({"mode": mode, "workspace_id": workspace_id, "events": events, "outcome": None})
+                raise APIConnectionError()
+            outcome = {"reason": "task_finish", "reward": 0, "success": False}
+            record = {"mode": mode, "workspace_id": workspace_id, "outcome": outcome,
+                      "events": [*events, {"event_id": 2, "timestamp": "end", "type": "stop", **outcome},
+                                 {"event_id": 3, "timestamp": "end", "type": "verifier", **outcome}]}
             save(record)
             return record
 
         with (tempfile.TemporaryDirectory() as directory,
               patch.object(benchmark, "AsyncChatClient", offline_client),
-              patch.object(benchmark, "MODELS", ("offline",)),
               patch.object(benchmark, "source_version", return_value={}),
               patch.object(benchmark, "runtime_versions", return_value={}),
-              redirect_stdout(StringIO())):
-            output = Path(directory) / "report.html"
-            for suffix, options in ((".json", {}), (".json.gz", {"compress_traces": True})):
-                with self.subTest(suffix=suffix):
-                    dataset = {"name": "Storage test", "split": "test", "selection": "full_split",
-                               "canonical_task_count": 1, "tasks": [task], **options}
-                    run_dir = output.parent / f"run{suffix}"
-                    trial_id = "m1-texample-eo"
-                    record_path = f"trials/{trial_id}{suffix}"
-                    archive_path = f"attempts/{trial_id}/attempt-000001{suffix}"
-                    with patch.dict(os.environ, {benchmark.RATE_FILE_ENV: str(output.parent / "matrix.rate")}):
-                        await benchmark.run_matrix(run_dir, rows, dataset, "unused", run_one=run_one, concurrency=1)
-                    self.assertEqual(read_json(run_dir / record_path)["error"], "APIConnectionError")
-                    missing_html = render_benchmark(run_dir, output, "storage-test")
-                    self.assertNotIn(f'href="{run_dir.name}/{record_path}"', missing_html)
-                    self.assertIn('aria-label="offline · EO · 任务 example · 缺评 · '
-                                  '运行启动或基础设施错误 · APIConnectionError"', missing_html)
-                    self.assertIn(">缺评</td>", missing_html)
-
-                    await benchmark.run_matrix(run_dir, rows, dataset, "unused", run_one=run_one,
-                                               concurrency=1, resume=True)
-                    self.assertEqual(read_json(run_dir / archive_path)["attempt"], 1)
-                    self.assertEqual(read_json(run_dir / record_path)["attempt"], 2)
-
-                    await benchmark.run_matrix(run_dir, rows, dataset, "unused", run_one=run_one,
-                                               concurrency=1, resume=True)
-                    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-                    self.assertEqual(manifest["invocations"][0]["dispatch_rate_scope"], "host_shared")
-                    self.assertEqual(manifest["trials"][trial_id]["archived_attempts"], [archive_path])
-                    self.assertEqual(manifest["invocations"][-1]["pending_trials"], 0)
-                    self.assertEqual(manifest["trial_counts"], {"complete": 4})
-                    html = render_benchmark(run_dir, output, "storage-test")
-                    self.assertIn(f'href="{run_dir.name}/{record_path}"', html)
-                    self.assertNotIn(f'href="{run_dir.name}/{archive_path}"', html)
-                    self.assertIn("已把 1 / 1 条归档尝试中可核对的消耗计入总量。", html)
-                    self.assertIn(">0.75</a>", html)
-
-                    stale = benchmark.scheduled_manifest(dataset, manifest["run_id"])
-                    observed = matched_trials(run_dir, stale, preview=True)["offline", "example", "eo"]
-                    self.assertEqual(observed.score, 0.75)
-                    self.assertEqual(observed.past, (run_dir / archive_path,))
-
-    def test_report_compares_common_tasks_and_validates_attempts(self):
-        with (tempfile.TemporaryDirectory() as directory,
-              patch.object(benchmark, "MODELS", ("first", "second")),
-              patch.object(benchmark, "source_version", return_value={}),
-              patch.object(benchmark, "runtime_versions", return_value={})):
-            run_dir = Path(directory)
-            dataset = {"name": "ScienceWorld", "split": "test", "selection": "full_split",
-                       "canonical_task_count": 2, "tasks": [{"task_id": "a"}, {"task_id": "b"}]}
-            manifest = benchmark.scheduled_manifest(dataset, "example")
-            manifest["status"] = "complete"
-            missing_trial = "m2-tb-pc"
-            for trial_id, trial in manifest["trials"].items():
-                if trial_id == missing_trial:
-                    trial["status"] = "error"
-                    continue
-                trial["status"] = "complete"
-                score = 0.75 if trial["task_id"] == "a" else 1
-                outcome = {"reason": "task_finish", "reward": score, "success": score == 1}
-                record = {**trial, "run_id": manifest["run_id"], "attempt": 1, "outcome": outcome,
-                          "events": [{"type": "stop", "reason": outcome["reason"]},
-                                     {"type": "verifier", **outcome}]}
-                write_json(run_dir / manifest["records"][trial_id], record)
-            manifest_path = run_dir / "manifest.json"
-            output = run_dir / "report.html"
-            write_json(manifest_path, manifest)
-            html = render_benchmark(run_dir, output, "comparison")
-            self.assertIn("有效评分 15 / 16。全配置配对任务 1 / 2。", html)
-            for model, count, average in (("first", 2, "0.875"), ("second", 1, "0.75")):
-                self.assertIn(
-                    f'{model}<br><span class="small">配对任务 {count} / 2</span></th>'
-                    '<th scope="row" class="mode">EO</th><td class="number">0.875</td>'
-                    f'<td class="number">{average}</td><td class="number"><strong>0.75</strong></td>', html,
-                )
-            self.assertIn("ScienceWorld 模拟器分数除以 100", html)
-            self.assertIn("/sciworld_benchmark.py", html)
-
-            trial = manifest["trials"][missing_trial]
-            trial["status"] = "complete"
-            write_json(manifest_path, manifest)
-            with self.assertRaisesRegex(ValueError, "score and completed status disagree"):
-                render_benchmark(run_dir, output, "comparison")
-
-            trial["status"] = "error"
-            trial["archived_attempts"] = [trial["file"]]
-            write_json(manifest_path, manifest)
-            with self.assertRaisesRegex(ValueError, "Duplicate benchmark attempt path"):
-                render_benchmark(run_dir, output, "comparison")
-
-    def test_report_keeps_raw_trace_and_validates_native_webshop_replay(self):
-        with (tempfile.TemporaryDirectory() as directory,
-              patch.object(benchmark, "MODELS", ("offline",)),
-              patch.object(benchmark, "source_version", return_value={}),
-              patch.object(benchmark, "runtime_versions", return_value={})):
-            run_dir = Path(directory)
-            dataset = {"name": "WebShop", "split": "test", "selection": "full_split",
-                       "canonical_task_count": 1, "tasks": [{"task_id": "a"}], "max_input_bytes": 5}
-            manifest = benchmark.scheduled_manifest(dataset, "webshop-run")
-            manifest["status"] = "complete"
-            for trial in manifest["trials"].values():
-                trial["status"] = "error"
-            trial_id = "m1-ta-eo"
-            trial = manifest["trials"][trial_id]
-            trial.update(status="unscored", error="PromptBudgetExceeded")
-            identity = {**trial, "run_id": manifest["run_id"], "attempt": 1}
-            original_outcome = {"reason": "runtime_error", "reward": None, "success": None}
-            messages = [{"role": "user", "content": "找杯子"}]
-            events = [{"type": "model_call", "event_id": 1, "role": "executor", "response": None,
-                       "messages": messages, "error": "PromptBudgetExceeded"},
-                      {"type": "stop", "reason": "runtime_error"}, {"type": "verifier", **original_outcome}]
-            original = run_dir / trial["file"]
-            write_json(original, {**identity, "outcome": original_outcome, "events": events})
-            write_json(run_dir / "manifest.json", manifest)
-            sidecar = run_dir / "native-replay" / f"{trial_id}.json"
-            input_bytes = len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-            replay = {**identity, "source": trial["file"], "method": "webshop_native_context_limit_replay",
-                      "blocked_call_event_id": 1, "input_bytes": input_bytes, "max_input_bytes": 5,
-                      "tool_events_replayed": 0, "outcome": {"reason": "prompt_budget", "reward": 0, "success": False}}
-            write_json(sidecar, replay)
-            html = render_benchmark(run_dir, run_dir / "report.html", "webshop")
-            self.assertIn("有效评分 1 / 4。全配置配对任务 0 / 1。", html)
-            self.assertIn(
-                'offline<br><span class="small">配对任务 0 / 1</span></th>'
-                '<th scope="row" class="mode">EO</th><td class="number">0</td>'
-                '<td class="number">未评</td><td class="number"><strong>未评</strong></td>', html,
-            )
-            self.assertIn(f'href="native-replay/{trial_id}.json"', html)
-            self.assertIn(f'href="trials/{trial_id}.json"', html)
-            self.assertIn(">0</a>", html)
-            self.assertEqual(read_json(original)["outcome"], original_outcome)
-            write_json(sidecar, {**replay, "outcome": {"reason": "prompt_budget", "reward": 1, "success": True}})
-            with self.assertRaisesRegex(ValueError, "native replay does not match"):
-                render_benchmark(run_dir, run_dir / "report.html", "webshop")
-            write_json(sidecar, {**replay, "blocked_call_event_id": 2})
-            with self.assertRaisesRegex(ValueError, "native replay does not match"):
-                render_benchmark(run_dir, run_dir / "report.html", "webshop")
-
-    def test_report_imports_only_matching_terminal_budget_verdict(self):
-        with (tempfile.TemporaryDirectory() as directory,
-              patch.object(benchmark, "MODELS", ("offline",)),
-              patch.object(benchmark, "source_version", return_value={}),
-              patch.object(benchmark, "runtime_versions", return_value={})):
-            run_dir = Path(directory)
-            output = run_dir / "report.html"
-            messages = [{"role": "user", "content": "查任务"}]
-            size = len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-            dataset = {"name": "Terminal-Bench", "split": "test", "selection": "reviewed_subset",
-                       "canonical_task_count": 66, "source_commit": "official", "data_version": "v4.1.0",
-                       "tasks": [{"task_id": "a", "task_version": "2.2.1"}], "max_input_bytes": size - 1}
-            manifest = benchmark.scheduled_manifest(dataset, "terminal-run")
-            manifest["status"] = "complete"
-            for trial in manifest["trials"].values():
-                trial["status"] = "error"
-            trial = manifest["trials"]["m1-ta-eo"]
-            trial.update(status="unscored", error="PromptBudgetExceeded")
-            original = run_dir / trial["file"]
-            manifest_path = run_dir / "manifest.json"
-            result = run_dir / "harbor/a-native/result.json"
-            lock = result.with_name("lock.json")
-            harbor = {"release": "v4.1.0", "commit": "official", "task_version": "2.2.1",
-                      "agent_network": "no-network", "verifier_phase_network": "no-network",
-                      "result": str(result), "lock": str(lock)}
-            outcome = {"reason": "runtime_error", "reward": None, "success": None}
-            call = {"type": "model_call", "role": "executor", "status": "error", "response": None,
-                    "messages": messages, "error": "PromptBudgetExceeded"}
-            verdict = {"type": "verifier", **outcome, "native_result": str(result),
-                       "timestamp": "2026-11-19T10:00:00+00:00"}
-            events = [call, {"type": "execution_feedback", "return_reason": "runtime_error"},
-                      {"type": "runtime_error", "error": "PromptBudgetExceeded"},
-                      {"type": "stop", "reason": "runtime_error"}, verdict]
-            record = {**trial, "run_id": manifest["run_id"], "attempt": 1, "outcome": outcome,
-                      "events": events, "harbor": harbor}
-            native = {"task_name": "terminal-bench/a", "finished_at": "2026-11-19T10:00:00Z",
-                      "trial_name": "a-native", "reward_valid": True, "exception_info": None,
-                      "verifier_environment_mode": "separate", "verifier_result": {"rewards": {"reward": 0}}}
-            locked = {"task": {"name": "a", "version": "2.2.1"}}
-            write_json(lock, locked)
-            write_json(result, native)
-            write_json(original, record)
-            write_json(manifest_path, manifest)
-
-            html = render_benchmark(run_dir, output, "terminal")
-            self.assertIn("有效评分 1 / 4", html)
-            self.assertIn("1 格在本地输入预算处停止", html)
-            self.assertIn('href="harbor/a-native/result.json"', html)
-            self.assertIn('href="trials/m1-ta-eo.json"', html)
-            self.assertNotIn("原生重放", html)
-            self.assertEqual(read_json(original), record)
-            self.assertEqual(read_json(manifest_path), manifest)
-
-            for name, path, changed, baseline in (
-                ("provider fault", original, {**record, "events": [
-                    {**call, "error": "RateLimitError"}, events[1],
-                    {**events[2], "error": "RateLimitError"}, *events[-2:],
-                ]}, record),
-                ("tool after local rejection", original,
-                 {**record, "events": [call, {"type": "tool_event", "action": "look"}, *events[1:]]}, record),
-                ("response present", original, {**record, "events": [{**call, "response": {}}, *events[1:]]}, record),
-                ("unlinked result", original,
-                 {**record, "events": [*events[:-1], {**verdict, "native_result": str(lock)}]}, record),
-                ("wrong source commit", original, {**record, "harbor": {**harbor, "commit": "other"}}, record),
-                ("wrong task lock", lock, {"task": {"name": "a", "version": "2.2.0"}}, locked),
-                ("invalid reward", result, {**native, "reward_valid": False}, native),
-                ("wrong result time", result, {**native, "finished_at": "2026-11-19T11:00:00Z"}, native),
-                ("native exception", result, {**native, "exception_info": {"type": "Error"}}, native),
-                ("shared environment", result, {**native, "verifier_environment_mode": "shared"}, native),
-                ("at byte limit", manifest_path,
-                 {**manifest, "budget": {**manifest["budget"], "max_input_bytes_per_request": size}}, manifest),
-            ):
-                with self.subTest(name=name):
-                    write_json(path, changed)
-                    self.assertIn("有效评分 0 / 4", render_benchmark(run_dir, output, "terminal"))
-                    write_json(path, baseline)
-
-            external_lock = run_dir / "external-lock.json"
-            write_json(external_lock, locked)
-            lock.unlink()
-            lock.symlink_to(external_lock)
-            self.assertIn("有效评分 0 / 4", render_benchmark(run_dir, output, "terminal"))
-
-    def test_report_combines_only_disjoint_matching_terminal_supplements(self):
-        with (tempfile.TemporaryDirectory() as directory,
-              patch.object(benchmark, "MODELS", ("offline",)),
-              patch.object(benchmark, "source_version", return_value={}),
-              patch.object(benchmark, "runtime_versions", return_value={})):
+              patch.dict(os.environ, {benchmark.UNPACED_ENV: "1"}), redirect_stdout(StringIO())):
             root = Path(directory)
-            runs = []
-            for task_id in ("a", "b"):
-                run_dir = root / task_id
-                dataset = {"name": "Terminal-Bench", "split": "test", "selection": "reviewed_subset",
-                           "canonical_task_count": 66, "source_commit": "official", "tasks": [{"task_id": task_id}]}
-                manifest = benchmark.scheduled_manifest(dataset, task_id)
-                manifest["status"] = "complete"
-                for trial in manifest["trials"].values():
-                    trial["status"] = "complete"
-                    outcome = {"reason": "task_finish", "reward": 0, "success": False}
-                    record = {**trial, "run_id": task_id, "attempt": 1, "outcome": outcome,
-                              "events": [{"type": "stop", "reason": "task_finish"}, {"type": "verifier", **outcome}]}
-                    write_json(run_dir / trial["file"], record)
-                write_json(run_dir / "manifest.json", manifest)
-                runs.append((run_dir, manifest))
-            output = root / "report.html"
-            html = render_benchmark(runs[0][0], output, "terminal", supplements=runs[1:])
-            self.assertIn("2 / 66 个官方任务", html)
-            self.assertIn("有效评分 8 / 8", html)
-            self.assertIn('href="b/trials/m1-tb-eo.json"', html)
-            with self.assertRaisesRegex(ValueError, "duplicate configurations"):
-                render_benchmark(runs[0][0], output, "terminal", supplements=runs[:1])
-            runs[1][1]["benchmark"]["source_commit"] = "different"
-            with self.assertRaisesRegex(ValueError, "differs from the completed matching protocol"):
-                render_benchmark(runs[0][0], output, "terminal", supplements=runs[1:])
+            for compressed in (False, True):
+                invoked.clear()
+                run_dir = root / str(compressed)
+                options = dict(run_one=run_one, concurrency=1, model_order=("offline",))
+                current_dataset = {**dataset, "compress_traces": compressed}
+                await benchmark.run_matrix(run_dir, {"sample": task}, current_dataset, "unused", **options)
+                manifest = read_json(run_dir / "manifest.json")
+                trials = matched_trials(run_dir, manifest)
+                self.assertIsNone(trials["offline", "sample", "eo"].score)
+                self.assertEqual(trials["offline", "sample", "pc-s"].score, 0)
+                await benchmark.run_matrix(run_dir, {"sample": task}, current_dataset, "unused", resume=True, **options)
+                await benchmark.run_matrix(run_dir, {"sample": task}, current_dataset, "unused", resume=True, **options)
+                manifest = read_json(run_dir / "manifest.json")
+                self.assertEqual(manifest["trial_counts"], {"complete": 6})
+                self.assertEqual(invoked["eo"], 2)
+                self.assertTrue(all(invoked[mode] == 1 for mode in FRAMEWORK_MODES if mode != "eo"))
+                observed = matched_trials(run_dir, manifest)["offline", "sample", "eo"]
+                self.assertEqual(observed.score, 0)
+                self.assertEqual(observed.cost["total_tokens"], 20)
+                self.assertEqual(len(observed.past), 1)
+                self.assertEqual(read_json(observed.path)["attempt"], 2)
+                self.assertEqual(read_json(observed.past[0])["attempt"], 1)
+                rendered = render_benchmark(run_dir, root / "report.html", "offline")
+                self.assertIn("缺评不计为零分", rendered)
+                self.assertIn("原始轨迹", rendered)
+                self.assertIn("重试成本证据", rendered)
+                trial = manifest["trials"]["m1-tsample-eo"]
+                trial["archived_attempts"] = [trial["file"]]
+                with self.assertRaisesRegex(ValueError, "Duplicate benchmark attempt path"):
+                    matched_trials(run_dir, manifest)
+
+    async def test_unknown_protocol_is_rejected_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "new-run"
+            run_one = AsyncMock()
+            with self.assertRaisesRegex(ValueError, "Unsupported protocol"):
+                await benchmark.run_matrix(path, {}, {"tasks": []}, "unused", run_one=run_one,
+                                           protocol_version="unsupported")
+            self.assertFalse(path.exists())
+            run_one.assert_not_awaited()
+
+    def test_magpie_native_configuration_uses_bare_models_and_unset_window(self):
+        settings, keys = run.load_model_settings()
+        for role in ("planner", "executor"):
+            self.assertEqual(settings[role]["base_url"], "http://127.0.0.1:3425/v1/magpie/native/tongji/v1")
+            self.assertEqual(keys[role], "magpie")
+        self.assertTrue(all("/" not in model for model in run.RECIPE_CONFIG["models"]))
+        self.assertEqual(run.load_context_window(), {"max_input_tokens": None})

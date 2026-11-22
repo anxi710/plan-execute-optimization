@@ -1,6 +1,6 @@
-"""Control policies for Planner–Executor frameworks."""
+"""Reusable two-phase planning and execution configurations."""
 
-from .control import MODES, InvalidPlannerDecision, run_framework
+from .control import run_framework
 from .runtime import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, PLAN_SCOPES
 
-__all__ = ["MODES", "FRAMEWORK_MODES", "FRAMEWORK_PROTOCOL", "PLAN_SCOPES", "InvalidPlannerDecision", "run_framework"]
+__all__ = ["FRAMEWORK_MODES", "FRAMEWORK_PROTOCOL", "PLAN_SCOPES", "run_framework"]

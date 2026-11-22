@@ -35,7 +35,7 @@ class PlannerPromptTest(unittest.TestCase):
         self.assertIn("Action: finish", terminal)
         self.assertNotIn("Available actions", terminal)
 
-    def test_plan_tag_and_legacy_text_are_parsed(self):
+    def test_plan_tag_and_untagged_text_are_parsed(self):
         self.assertEqual(extract_plan("<PLAN>\nStep 1: Find the object.\n</PLAN>"),
                          "Step 1: Find the object.")
         self.assertEqual(extract_plan("  Step 1: Find the object.  "), "Step 1: Find the object.")
