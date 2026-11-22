@@ -1,6 +1,61 @@
 # 动态规划协议实施方案
 
-**定稿，待实现。** EO 和 PE 由 Executor 推进整项任务，PC 由 Planner 推进整项任务。PE 的规划入口统一为原生 `request_plan`；两种 PC 共用 **Initial Sub-Plan Generation** 和 **Continuous Execution Monitoring**。Planner 先判断，再交付。Executor 的上下文跟随实际生效的 sub-plan 切换。以下按六种配置规定控制流、角色可见状态、预算和验收条件。[逐项讨论](../../DISCUSSION.md#规划覆盖范围与控制权) · [当前运行代码](protocol-review.html#compare)
+当前实现采用 `two-phase-v2`，在两阶段控制流上恢复完整交互历史和独立观察编号。环境动作接口、原生求助工具说明和环境已填好名称、按状态筛选的候选列表保持不变；本轮不评估动作接口辅助的收益。[研究讨论](../../DISCUSSION.md#实机轨迹审阅上下文与输出格式) · [实现](../../src/toolkit/frameworks/runtime.py)
+
+按研究者最新决定，独立 Hard constraints 参数、状态字段、清单字段和提示块已删除。任务原文要求保留，历史原始输入不改写；下方折叠的旧方案仍保留当时的字段和措辞。
+
+## 当前两阶段控制流
+
+| 配置 | 初始规划 | 执行与监测 |
+| --- | --- | --- |
+| EO | 无 Planner。 | Executor 直接选择环境动作。 |
+| PE-S | 直接调用 Planner 交付一次 full-plan。 | Executor 继续整任务，不提供规划工具。 |
+| PE-D-F/S | 直接调用 Planner，分别交付 full-plan 或当前 sub-plan。 | Executor 平时直接执行；收到它的原生 `request_plan` 才进入在线规划分支，配对返回后继续执行。 |
+| PC-F/S | Planner 以普通 JSON 交付初始整体计划与当前编号，或当前阶段。 | 每个非终局轮直接调用一次 Executor；环境未终止时再由 Planner 监测、维持或更新，然后继续执行。双方不注册执行工具。 |
+
+两种 PC 的第一阶段只规划，不执行环境动作。第二阶段使用固定的“单步执行 → 环境反馈 → 非终局监测”循环。Planner 可以判断阶段是否完成和是否改路线，整任务的终止与成败由环境反馈及独立验收确定。开放任务由 Executor 经环境提交，不使用 Planner 的 `submit_task`。终局或预算后最多一次只读收尾，失败不改写已有裁决。
+
+## 规划交付与真实工具调用
+
+Planner 的初始规划和在线监测均返回普通文本中的一个 JSON 对象，不带 `tools`、`tool_choice` 或 provider 专用格式参数。`thinking_summary` 必填，`evidence_refs` 只能引用当前可见观察；对象解码和原有字段、阶段、引用校验先于状态交付。P10 的未知键、Markdown 等扩展兼容策略继续延后。
+
+| 角色与范围 | 初始交付 | 后续交付 |
+| --- | --- | --- |
+| PE full/sub | `full_plan` 或 `stage_objective`、`completion_condition`。 | 对应范围的新指导，或 `keep: true`。 |
+| PC-F | `full_plan` 与 `current_subplan_id`。 | 保持时省略计划字段；转段更新当前编号；修订路线时给完整计划、编号和 `revision_reason`。 |
+| PC-S | `stage_objective` 与 `completion_condition`。 | 保持时省略两字段；转段交付新阶段。 |
+
+PC 沿用公开证据、已验证阶段、`previous_stage_status`、`hypotheses` 和 `remaining_work` 的边界，空剩余工作不能触发结束。完整计划保留在 PC-F 的 Planner 侧，Executor 只接收当前实际交付的阶段。已完成阶段只回放阶段目标、完成条件与观察引用，不携带当轮判断中的未来不确定性；完整 `thinking_summary` 仍保留在原始日志。`verified` 是 Planner 判断，阶段独立语义 verifier 尚未引入。
+
+只有 PE-D 的 Executor 通过 `FunctionTool` 请求 `request_plan(reason, evidence_refs?)`。首次计划已由运行器直接取得；这个工具仅用于执行阶段的后续求助。运行器补齐任务目标、当前计划和公开观察，Planner 返回 JSON 后渲染为文字工具结果，保留原 `tool_call_id` 配对。一次工具求助不派发环境动作；不能在同一次回复中混合工具请求与环境 `Action:`。`deliver_plan`、`execute_step`、`submit_task` 不再作为模型工具。
+
+## 状态、预算与版本边界
+
+单次 `FrameworkRun` 保存规划、阶段和公开证据，复用 `RolloutSession` 执行模型和环境调用。真实环境与工作区持续存在；双方保留完整可见交互历史，不再使用 Recent／Earlier 两块或跨阶段清空窗口。Executor 原始回复、原生工具配对及完整动作反馈保留；当前动作列表由环境单独注入，Planner 不获得该目录。ALFWorld 的初始场景与任务目标分开呈现。运行器参数、剩余额度和事件元数据不进入任务正文。
+
+初始观察从 1 开始，后续实际环境反馈连续编号；本地格式拒绝、模型调用和规划求助不占号。事件日志保留独立 `event_id`，观察另存 `observation_id`，规划引用使用观察号。完整历史不会自动摘要，现有调用方请求体字节预算仍显式检查；Toolkit 统一上下文窗口与压缩策略尚待设计。
+
+初始化规划的模型成本单列。执行阶段以实际派发的环境交互计主预算，本地无效输出和规划求助不计环境步；两次真实动作之间最多一次无动作往返。初始规划之后到第一步也采用这个执行阶段限制。末步环境终局先于预算检查，异常保留已派发及结果未知状态，不自动重放。
+
+新清单和轨迹标记 `two-phase-v2`，调用链显式传递协议。旧 `two-phase-v1`、`native-tools-v1` 及旧四配置记录仍可读取、汇总、导出；当前运行器拒绝两个旧六配置协议续跑，避免新流程或新引用语义被保存成旧版本。无协议的旧四配置仍保留 `--legacy` 执行路径。原始提示、回复、评分与归档尝试不改写。
+
+## 两阶段协议验收
+
+| 验收项 | 离线通过条件 |
+| --- | --- |
+| 两阶段与工具边界 | 非 EO 首调用为 Planner，初始失败时零执行；仅 PE-D Executor 暴露 `request_plan`，PC 交替执行与监测且无模型工具调用。 |
+| 证据与上下文 | 求助 ID 配对；公开引用按观察号校验；长历史及原始 Executor 回复跨阶段完整保留，最新观察不重复，当前菜单仅 Executor 可见；环境只 reset 一次。 |
+| 环境与预算 | 单步真实派发计量；末步终局优先；Planner 不能主观结束；非派发的环境提交仍保存终局观察；收尾失败保留裁决。 |
+| 装配与兼容 | Recipe 的真实装配路径传入协议，新记录使用新身份；旧工具协议在环境准备、API 或写入之前拒绝续跑；新旧记录分别保持原始消息导出。 |
+
+实现与测试入口为 [框架测试](../../src/toolkit/tests/test_framework_runtime.py)、[Recipe 存储与调用](../../src/recipe/planner-centered/tests/test_benchmark_storage.py)和[原始轨迹导出](../../src/recipe/planner-centered/tests/test_export_alfworld.py)。v2 本轮只做离线与无模型后端检查。此前 v1 按研究者授权使用同一 `dev/2`、一个模型、六配置和每组 20 个真实环境步完成实机验收；实际设置、原始轨迹、网络拒绝及恢复记录见[实机记录](README.md#two-phase-v1-实机验收)。旧单任务证据不验证 v2 的历史与编号改动，也不能证明成功率或学习收益。
+
+<details>
+<summary>历史 native-tools-v1 实施方案与当时核查</summary>
+
+以下保留旧工具协议的设计、输入核查及当时验收条件，仅用于解释既有轨迹；其中的执行工具和实机步骤不代表当前两阶段流程。
+
+EO 和 PE 由 Executor 推进整项任务，PC 由 Planner 推进整项任务。PE 的规划入口统一为原生 `request_plan`。两种 PC 共用 **Initial Sub-Plan Generation** 和 **Continuous Execution Monitoring**，Planner 先判断，再交付。Executor 的上下文跟随实际生效的 sub-plan 切换。以下规定六种配置的控制流、角色可见状态、预算和验收条件。[逐项讨论](../../DISCUSSION.md#规划覆盖范围与控制权) · [实施前协议快照](protocol-review.html#compare)
 
 ## 1. 六种配置与两条调用链
 
@@ -88,9 +143,9 @@
 
 **完整交互历史应留在轨迹中；在线请求只需要当前执行所需的信息。** 这里核对的是送进生成接口的请求，而非仅查看环境如何保存观察。
 
-| 当前实现 | 一次生成真正收到什么 |
+| 核对的调用入口 | 一次生成真正收到什么 |
 | --- | --- |
-| 本仓库 planner-centered | `RolloutSession.step` 把累计 `state.history` 整份传给 Executor。环境每步追加 assistant 回复和 user 反馈；框架还追加指导。`model_call` 将该列表原样作为 SDK 的 `messages`，现有 recipe 只读取响应的文本。 |
+| 本仓库的旧四配置协议 | `RolloutSession.step` 把累计 `state.history` 整份传给 Executor。环境每步追加 assistant 回复和 user 反馈；框架还追加指导。`model_call` 将该列表作为 SDK 的 `messages`，旧协议读取响应文本。 |
 | 本地 verl-agent 上游训练 rollout | 每轮用当步环境管理器组装的文本建立一条 user 消息，套 chat template，生成 `input_ids`、`attention_mask`、`position_ids` 等，再把批次交给 `generate_sequences`。这是本地生成入口，不能将它描述成某个服务端 HTTP 请求。 |
 | 上游 verl-agent 自带的 ALFWorld HTTP 示例 | `get_action_from_gpt` 把 `obs["text"][i]` 作为唯一一条 user 消息发给 SDK，调用参数包括 `model`、`temperature`、`n`、`stop`。[示例源码](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/examples/prompt_agent/gpt4o_alfworld.py#L34-L46) |
 | 本地 verl-agent-system 的独立 Executor | rollout 每步把当前 metaplan 和组装好的执行观察传给 `sample_actions`。它新建一条 `user`，正文为当步观察、文字提示和该 metaplan，随后调用 Chat Completions。先前观察可由环境窗口写进这条文字。 |
@@ -130,7 +185,7 @@
 
 | 实施次序与现有入口 | 离线验收条件 |
 | --- | --- |
-| 1. 模型调用。从 [recipe 的 model_call](../../src/recipe/planner-centered/run.py) 到[共享客户端](../../src/toolkit/agents/openai_agent.py)保留原生工具定义、返回参数与配对 ID，请求长度检查覆盖实际提示及工具定义。 | 用内存响应分别返回普通文本和仅含工具调用的消息；调用一次、正确配对一次，被调用角色收到文字任务。PE 取计划的环境步计为零，PE-S 下一次请求已撤下工具。 |
+| 1. 模型调用。从 [recipe 的 model_call](../../src/recipe/planner-centered/run.py) 到[共享客户端](../../src/toolkit/models/openai.py)保留原生工具定义、返回参数与配对 ID，请求长度检查覆盖实际提示及工具定义。 | 用内存响应分别返回普通文本和仅含工具调用的消息；调用一次、正确配对一次，被调用角色收到文字任务。PE 取计划的环境步计为零，PE-S 下一次请求已撤下工具。 |
 | 2. 控制与输入。在[框架控制器](../../src/toolkit/frameworks/control.py)实现六种配置和生效阶段转移，在[框架提示模板](../../src/toolkit/prompts/frameworks.py)实现两个 PC 共同阶段，在[共享会话](../../src/toolkit/rollout/session.py)按阶段构建 Executor 输入。 | 对同一条价格观察运行四个动态配置。两种 PC 各初始化一次，实际动作每得到一次反馈就监控一次；同轮记录判断依据和交付。PC-S 能回查全部已验证阶段；PC-F 能通过编号推进，也能只改未来计划。 |
 | 3. 预算与清单。[环境适配器](../../src/toolkit/envs/base.py)在实际派发处计步，[recipe 调度](../../src/recipe/planner-centered/benchmark.py)与调用包装同步移除原先的按周期返回和角色上限。保留已获授权的运行资源边界。 | 本地无效动作计零环境步，后端拒绝已派发动作计一步。最后一步成功优先保留环境结果，最后一次只读收尾失败不改评分，连续无动作往返可终止。模型输入中没有剩余额度。 |
 | 4. 轨迹与结果。[配对报告](../../src/recipe/planner-centered/report.py)和[轨迹导出](../../src/recipe/planner-centered/export_alfworld.py)从清单读取协议版本与配置集合，阅读器展示对应的实际交付。 | 旧四配置的样本仍按当时协议读取，新六配置各自可选、可配对。能从同一轨迹区分环境步、监控、换阶段、修订与收尾。历史 `pe-d` 或 `pc` 记录不并入新版变体的结果。 |
@@ -142,3 +197,17 @@
 - **工具调用与控制权。** 比较 PE-D-S 和 PC-S 时固定子计划范围与 Executor 模型，同时记录谁获得观察机会、谁要求改计划、谁能继续整任务。PC 每步必监控，工具返回次数不能当作重规划次数。
 - **全计划表示与阶段上下文。** 比较 PE-D-F 与 PC-F 时尽量对齐计划内容和反馈来源，单列 PC-F 的活动编号、Planner 的逐步监控以及给 Executor 的计划可见范围。仅换阶段、修订剩余路线和更新假设分别计数。
 - **成本与效果。** 工具调用可能降低自定义协议的使用难度，也会增加往返或工具描述长度。短窗口、按阶段刷新、前缀缓存又分别影响输入成本。固定其他条件后比较触发正确性、误停、跨阶段事实遗漏、成功率、真实环境步与各角色调用成本。以上是协议设计与验收条件，收益有待实测。
+
+## 7. 本轮实施验收
+
+| 验收项 | 通过条件 |
+| --- | --- |
+| 六种控制流 | EO 全程没有 Planner；PE-S 只规划一次；PE-D 在原生工具请求时才规划；两种 PC 各初始化一次，逐条处理真实环境反馈，最后一条只读收尾。 |
+| 交付与记忆 | 工具响应与调用 ID 配对，跨角色收到文字交付。PC-F 的 Executor 看到当前阶段；换段清除旧对话与旧菜单，任务事实及来源仍能回查，环境与步数继续累积。 |
+| 停机与兼容 | 本地拒绝和取计划计零环境步；终局优先于预算；收尾失败保留已有评分；无法确定结果的动作保留其派发状态；旧四配置清单可继续验证和阅读。 |
+| ALFWorld 实机 | 六组使用同一任务初态、相同环境步数上限和 Magpie 路由 `tongji/DeepSeek-V4.1-Flash`。各组留下真实模型请求、工具往返、环境记录和原生评分。分数按环境返回保留，接口错误和协议中断单列。 |
+| 可视化 | 用现有 ALFWorld 阅读器展示六条轨迹；可切换架构、对照全文，查到原始提示、回复、工具调用、动作、反馈和终局。 |
+
+实机验收使用已有的 ALFWorld `dev/2`（将遥控器放到沙发上），每种配置独立从同一游戏文件初始化。先跑上述离线验收，再执行一次六组实机运行。
+
+</details>

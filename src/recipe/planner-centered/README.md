@@ -1,23 +1,68 @@
-# 四种规划框架的接口验收
+# 规划框架运行与接口验收
 
-本 Recipe 调用 [`toolkit.frameworks`](../../toolkit/README.md#四种运行框架) 中的 EO、PE-S、PE-D 和 PC，负责装配模型、环境、预算与结果分析。框架控制策略和证据协议由 [`frameworks/control.py`](../../toolkit/frameworks/control.py) 的 `run_framework()` 入口维护；四框架与固定计划采样共用 [`RolloutSession`](../../toolkit/rollout/session.py) 的执行循环，批量调度共用 [`sample_jobs()`](../../toolkit/rollout/batch.py)。[组件边界](../../toolkit/README.md#执行与采样的组合)
+本 Recipe 装配 EO、PE-S、PE-D-F/S 和 PC-F/S 的模型、环境、预算与结果分析。六种配置共用 [`run_framework()`](../../toolkit/frameworks/control.py)、[`RolloutSession`](../../toolkit/rollout/session.py) 和 [`sample_jobs()`](../../toolkit/rollout/batch.py)。[框架接口](../../toolkit/README.md#四种运行框架)
+
+当前入口使用 `two-phase-v2`。PE-S 与 PE-D 先直接调用 Planner 交付初始规划；只有 PE-D 的 Executor 在执行阶段拥有 `request_plan` 工具。PC 每个非终局轮直接执行一次 Executor，读取环境反馈后再监测，双方不注册执行工具。观察独立连续编号、完整交互历史跨阶段保留，PE-S 与 PE-D 分别使用适合当前阶段的 Planner 提示，已完成阶段输入不再回放判断全文。Planner 普通 JSON 与 `thinking_summary` 暂时保留，标签格式仍在讨论。[定义与实施](../../../DISCUSSION.md#实机轨迹审阅上下文与输出格式)
+
+四后端不再定义固定 `CONSTRAINTS`，不向框架传入独立约束参数，也不在新清单保存该字段；任务原文中的要求保持完整。旧 WebShop 回放兼容读取历史 `constraints`，不会恢复为新运行的默认注入。
+
+新运行和恢复检查都显式传递协议版本。旧 `two-phase-v1` 与 `native-tools-v1` 运行可读取、汇总和导出，但不能用新流程续跑；需使用当时源码重现，原始记录不改写。更早四配置仍由 `--legacy` 路径运行。当前动作模板及环境已填好参数的候选列表保持不变，其辅助性质仍限制结果解释。[动作接口边界](../../../DISCUSSION.md#参数实例化状态筛选与-planner-评价)
+
+完整历史不再受摘录字符上限或阶段窗口裁剪，但 Recipe 现有请求体大小预算仍单独生效：矩阵入口默认每请求 32,000 字节，单任务 legacy 入口为 11,000 字节，Terminal-Bench 有独立设置。超限会明确停止并保存缺评，不静默删历史。把该预算收敛到 Toolkit、按模型容量维护上下文窗口以及是否引入自动压缩，尚未实施；不能将服务端标称 token 容量与这些本地字节预算等同。
 
 环境模板、框架协议文本与渲染、解析函数统一从 `toolkit.prompts` 导入。修改内置提示词时，按环境或框架协议编辑对应模板；Executor 自定义文件覆盖方式见[统一提示词](../../toolkit/README.md#统一提示词)。
 
-当前工作区的 Planner 模板只要求高层子目标、前提和证据，不列具体动作命令。Executor 使用环境返回的当前候选动作；候选目录与 Planner 的原始公开观察分开，来源及 Terminal-Bench 的接口例外见[统一提示词](../../toolkit/README.md#统一提示词)。这与下述历史验收的提示协议不同，已有结果和原始 prompt 保持原样，没有按新协议重跑。
+Planner 使用高层子目标、前提与证据。Executor 使用环境返回的当前候选动作。候选目录及 Terminal-Bench 接口见[统一提示词](../../toolkit/README.md#统一提示词)。
 
-本次接口验收用同一个 ALFWorld 开发任务检验控制流和证据隔离。请求、返回、隔离验收与对照要求参考本地测试提案 `Planner_Centered_Test_Proposal.pdf` 的 §2、§5 和 §6.2。该 PDF 不纳入 Git。测试提案的三组主比较与本次四组接口验收属于不同阶段。
+## 配置与单任务验收
+
+连接默认值由 [Toolkit 配置](../../toolkit/config.yaml)提供，本 Recipe 的 [`config.yaml`](config.yaml) 分别通过 `toolkit.planner_generation` 和 `toolkit.executor` 覆盖两个角色的 `api_base`、`api_key` 和 `model_name`。本轮模型运行入口支持 `--config`。两个角色分别建立连接；某角色的 `api_key: null` 时，仅该角色读取通用环境变量 `OPENAI_API_KEY`，不借用另一角色的 key。实际 key 不写入实验清单或轨迹，受跟踪的配置不填写真实密钥。
+
+模型矩阵用 `models` 列表选择 Executor 模型。Planner 的 `model_name: null` 表示沿用每个矩阵项，保留原来的同模型对照；显式填写 Planner 模型名时，该模型在矩阵中保持固定。`run.py` 的单任务验收使用配置的 Executor `model_name`，Planner 同样遵循这个空值规则。两个角色的请求共用同一个总限速。
+
+两个角色均可配置 `thinking` 和 `reasoning_effort`；空值表示不发送该字段，不表示关闭推理。`thinking` 按 `extra_body.thinking.type` 发送，`reasoning_effort` 按同名请求字段发送，不按服务商名称自动转换。默认 Recipe 按[同济接口文档](https://agi.tongji.edu.cn/docs/reasoning)为两者设置 `reasoning_effort: none`，请求关闭内置推理；是否生效仍须核对模型支持范围与返回用量。切换接口时按目标文档调整这些值。框架的 `thinking_summary` 是模型公开判断文本，与这些请求参数分开。
+
+本机网关与远端服务使用同一客户端。例如，连接本机网关时，在本轮 Recipe 配置中设置：
+
+```yaml
+models: [tongji/DeepSeek-V4.1-Flash]
+toolkit:
+  planner_generation:
+    model_name: null
+    api_base: http://127.0.0.1:3425/v1
+    api_key: magpie
+  executor:
+    model_name: tongji/DeepSeek-V4.1-Flash
+    api_base: http://127.0.0.1:3425/v1
+    api_key: magpie
+```
+
+从仓库根目录运行，`RECIPE_CONFIG` 指向本轮配置文件。使用 `plan-test` 和匹配的 ALFWorld 0.4.2 依赖；`ALFWORLD_GAMEFILES` 指向已有的 dev 游戏映射。
+
+```bash
+PYTHONPATH=src python src/recipe/planner-centered/benchmark.py \
+  --config "$RECIPE_CONFIG" --split dev --task-id 2 --concurrency 1 \
+  --data-dir "$ALFWORLD_DATA" --gamefiles "$ALFWORLD_GAMEFILES" \
+  --run-dir "$RUN_DIR"
+```
+
+每种配置独立加载同一个 `dev/2`。清单和轨迹保存共同环境步数上限、分数、完整模型请求、PE-D 原生工具往返和环境反馈。该命令会调用模型，默认每组 12 个真实环境步；2026-11-22 的单任务验收通过任务级 `executor_limit` 设为 20。该次 `plan-test` 实际安装 ALFWorld 0.3.5，清单如实记录，未改写旧 0.4.2 结果。[本轮实机记录](../../../experiments/planner-centered/README.md#两阶段运行协议) · [验收条件](../../../experiments/planner-centered/protocol-design.md#两阶段协议验收)
+
+## 历史四配置验收
+
+旧接口验收用同一个 ALFWorld 开发任务检验控制流和证据隔离。请求、返回、隔离验收与对照要求参考测试提案 `Planner_Centered_Test_Proposal.pdf` 的 §2、§5 和 §6.2。
 
 各组独立加载同一个已核对的 `dev/2` 游戏。组内持续使用同一个环境和 Executor 对话。运行器在完成两个原子动作轮后检查返回边界。格式错误也消耗动作轮额度。Executor 可调整软指导，使用各组共有的工具与提示词。PE-D 和 PC 延续已完成工具动作的结果。PC 使用固定阶段额度，由 Planner 决定下一阶段或是否结束。
 
 Planner 可见任务、规划、初始观察、公开动作与观察及来源明确的 Executor 陈述。未验证假设单独保存。执行额度、返回间隔等技术限制由运行器执行和记录，不告知模型；具体输入边界见[框架接口](../../toolkit/README.md#四种运行框架)。ALFWorld 的原生任务结束信号可触发收尾，PC 可在运行器允许时记录结束建议，`won` 与奖励只在停止后写入验收记录。任务终局始终由环境判定。停止并记录原生判定后不再发起模型调用或环境动作。文本动作同步返回，所以本适配器可在动作之间安全续接。非原子操作中途暂停和后端原生阶段返回留待其他适配器验证。
 
-## 运行
+### 重现旧验收
 
-从仓库根目录运行，使用[工具集 Python 环境](../../toolkit/README.md#环境与数据)和已有 ALFWorld 数据。`RUN_DIR` 指向新的本地目录。`ALFWORLD_GAMEFILES` 指向包含 `dev/2` 的已核对游戏映射，例如历史战略采样运行的 `gamefiles.jsonl`。CLI 从环境读取 `TONGJI_API_KEY`，请求走[同济人工智能服务平台](https://nic.tongji.edu.cn/fwzn/kyfw/rgznfwpt.htm)。如果本机已在学校网络且代理把请求送到校外，为本次进程在 `NO_PROXY` 和 `no_proxy` 中加上 `agi.tongji.edu.cn`。
+从仓库根目录运行，使用[工具集 Python 环境](../../toolkit/README.md#环境与数据)和已有 ALFWorld 数据。`RUN_DIR` 指向新的本地目录。`ALFWORLD_GAMEFILES` 指向包含 `dev/2` 的已核对游戏映射，例如历史战略采样运行的 `gamefiles.jsonl`。默认 Recipe 配置保留[同济人工智能服务平台](https://nic.tongji.edu.cn/fwzn/kyfw/rgznfwpt.htm)的地址，key 从 `OPENAI_API_KEY` 读取。如果本机已在学校网络且代理把请求送到校外，为本次进程在 `NO_PROXY` 和 `no_proxy` 中加上 `agi.tongji.edu.cn`。
 
 ```bash
 PYTHONPATH=src python src/recipe/planner-centered/run.py \
+  --legacy \
   --data-dir "$ALFWORLD_DATA" \
   --gamefiles "$ALFWORLD_GAMEFILES" \
   --run-dir "$RUN_DIR"
@@ -44,7 +89,7 @@ PYTHONPATH=src python -m unittest discover -s src/recipe/planner-centered/tests 
 
 [本次真实验收记录](../../../experiments/planner-centered/README.md)保存完整轨迹、首轮失败和两轮对应的源码补丁。
 
-## 完整测试集
+## 历史完整测试集
 
 本轮继续正式评分的 benchmark 是 ALFWorld。将 `DeepSeek-V4.1-Flash`、`MiniMax-M3.1-Flash`、`GLM-5.3-Flash` 和 `Qwen3.8-27B` 与四种框架配对。每格运行一次，同一模型组的 Planner 和 Executor 使用同一模型。各框架共用对应环境的工具和执行额度。原生分数保留，无法取得分数的运行故障记缺评。WebShop 和 ScienceWorld 已停止，已有分数用于同任务比较。Terminal-Bench 已终止，已出分数交人工核验。[实验记录](../../../experiments/planner-centered/README.md#完整测试集评测)
 
@@ -56,6 +101,7 @@ Planner 和 Executor 的输出上限分别为 1,536 和 768 token。各模型均
 
 ```bash
 PYTHONPATH=src python src/recipe/planner-centered/benchmark.py \
+  --legacy \
   --data-dir "$ALFWORLD_TEST_OVERLAY" \
   --gamefiles "$ALFWORLD_TEST_GAMEFILES" \
   --run-dir "$BENCHMARK_RUN_DIR"
@@ -67,6 +113,7 @@ PYTHONPATH=src python src/recipe/planner-centered/benchmark.py \
 
 ```bash
 PYTHONPATH="src:$WEBSHOP_UPSTREAM" python src/recipe/planner-centered/webshop_benchmark.py \
+  --legacy \
   --data-dir "$WEBSHOP_TEST_CATALOG" \
   --run-dir "$BENCHMARK_RUN_DIR"
 ```
@@ -82,6 +129,7 @@ PYTHONPATH=src python src/recipe/planner-centered/sciworld_benchmark.py \
   --prepare --catalog-dir "$SCIWORLD_TEST_CATALOG"
 
 PYTHONPATH=src python src/recipe/planner-centered/sciworld_benchmark.py \
+  --legacy \
   --catalog-dir "$SCIWORLD_TEST_CATALOG" \
   --step-limits "$SCIWORLD_DATA/max_steps.json" \
   --model DeepSeek-V4.1-Flash \
@@ -94,6 +142,7 @@ PYTHONPATH=src python src/recipe/planner-centered/sciworld_benchmark.py \
 
 ```bash
 PYTHONPATH=src python src/recipe/planner-centered/terminal_benchmark.py \
+  --legacy \
   --terminal-bench-root "$TERMINAL_MUSIC_CHECKOUT" \
   --additional-task-root fin-saccr-rwa "$TERMINAL_FINANCE_CHECKOUT" \
   --additional-task-root photonic-waveguide-routing "$TERMINAL_PHOTONIC_CHECKOUT" \

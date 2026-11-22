@@ -1,8 +1,60 @@
-# 四框架真实模型验收
+# 规划框架实验与验收
 
-[当前代码的协议审查](protocol-review.html)按架构展示交付关系、Planner 和 Executor 协议；共用的返回规则、字段与原文、架构对比及待审查点独立展示。它沿用本目录 `audit.html` 的主题，是可直接在浏览器打开的独立 HTML 页面，内容依据当前代码。
+## 两阶段运行协议
 
-针对这份代码的 [18 项协议讨论](../../DISCUSSION.md#规划覆盖范围与控制权)保留了逐题依据。[下一版协议的最终实施方案](protocol-design.md)给出 PE 的原生规划工具、PC-S/F 的两阶段流程、按生效子计划切换的执行上下文及验收条件。下列实验采用各自运行清单记录的历史协议。[旧实验中的结束建议](finish-advice.md)可逐条核对 Planner 原话、环境观测、停止原因和评分。
+当前代码使用 `two-phase-v2`：两阶段控制流不变，恢复完整交互历史和原始 Executor 回复，观察另按环境反馈从 1 连续编号；去重初始任务目标，区分 PE-S／PE-D 提示，已完成阶段不再回放整段判断。环境动作接口、原生求助说明及普通 JSON 输出协议暂不变。独立 Hard constraints 已删除，任务原文要求保留。本轮只进行离线与无模型后端检查，未重跑实机。[当前实现与运行方式](../../src/recipe/planner-centered/README.md) · [实施与验收条件](protocol-design.md)
+
+### two-phase-v1 实机验收
+
+以下结果对应旧 `two-phase-v1`，保留当时完整请求和评分，不替换为 v2 的输入或引用语义。
+
+2026-11-22 按研究者授权，用同一 ALFWorld `dev/2` 游戏「把遥控器放在沙发上」验收六种配置，每组最多 **20 个真实环境步**。六组均在 4 步后获得原生奖励 1。[六配置完整轨迹](runs/two-phase-magpie-dev2-campus/alfworld.html)可离线打开，保留完整 prompt、原始响应、工具参数与环境反馈；[运行清单](runs/two-phase-magpie-dev2-campus/manifest.json)保存设置和尝试成本。
+
+两角色经本机 Magpie 使用 `tongji/DeepSeek-V4.1-Flash`，Planner / Executor 温度为 0.2 / 0.6、输出上限为 1,536 / 768 token，均请求 `reasoning_effort: none`。单次超时 60 秒，无请求级自动重试；输入上限 32,000 字节，采样 seed 未指定，并发度 1。以下请求成本包含归档超时，评分只使用最终有效轨迹。
+
+| 配置 | 原生奖励 | 真实环境步 | Planner 请求 | Executor 请求 | 已报告总 token |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EO | 1 | 4 | 0 | 4 | 2,283 |
+| PE-S | 1 | 4 | 1 | 4 | 4,188 |
+| PE-D-F | 1 | 4 | 1 | 4 | 5,080 |
+| PE-D-S | 1 | 4 | 3 | 6 | 9,255 |
+| PC-S | 1 | 4 | 5 | 4 | 8,575 |
+| PC-F | 1 | 4 | 6 | 4 | ≥ 9,405 |
+
+六组累计 24 个环境步、42 次模型请求尝试，41 次返回用量，总 token 至少 38,786。PC-F 首次 Planner 请求超时、零环境步；只恢复该配置一次，原始尝试[单独归档](runs/two-phase-magpie-dev2-campus/attempts/m5-t2-pc-f/attempt-000001.json)，其余五组未重跑。模型调用累计等待约 394.9 秒，清单墙钟跨度约 7 分 10 秒，含恢复间隔。若计入下述首轮 6 次网络拒绝和额外 1 次连接诊断，本次联调共 49 次模型请求尝试；另有两次无模型 `look` 后端检查，不计入六组任务步。服务端用量仍报告非零推理 token，不能仅据请求 `none` 认定推理关闭。[推理开关边界](../../DISCUSSION.md#模型内置推理与显式思考)
+
+真实轨迹确认：非 EO 均先直接取得初始 JSON 计划；只有 PE-D 的 Executor 注册 `request_plan`。PE-D-F 没有在线求助，其在线复核或修订分支仍未实机验收；PE-D-S 在找到、拿起遥控器后分别求助，工具结果均按 ID 配对。PC-S 换阶段三次；PC-F 按阶段 1 → 2 → 3 → 保持 3 运行，双方均无模型工具调用；两组最终都在环境终局后做一次只读收尾。
+
+PE-D-S 的第三份子计划仅要求移动到沙发；Executor 到达后直接放置，没有再次求助。放置前事件 22、23 只有场景、动作菜单和普通反馈，没有任务完成标志；事件 24 的公开说明判断可以直接完成任务，实际放置后的事件 25、26 才出现终局。研究者接受这条最终轨迹，理由是 Executor 驱动整任务，无需为阶段形式追加不必要的规划。按研究者最新说明，工具文档保持原样，不加入强制阶段边界，也不再把该样本列为待修复缺口。该现象的成因仍未由单条轨迹分离，未为此改提示或追加试验。[上下文与格式审阅](../../DISCUSSION.md#实机轨迹审阅上下文与输出格式)
+
+本次实际解释器为 `plan-test` 的 Python 3.11.16，ALFWorld **0.3.5**、TextWorld 1.7.0，源码为未提交的工作区修改。环境初始化改为直接构造支持的 `AlfredTWEnv`；现有真实后端检查通过重复加载和动作派发。旧批次记录 ALFWorld 0.4.2、12 步上限，因此本次仅验收新流程，不据此比较新旧协议的效果或成本优势。
+
+首轮六配置都在首次请求收到上游 HTTP 403，零环境步、全部缺评；另一次最多 1 输出 token 的连接诊断同样被拒绝，未返回用量。核查时同济域名解析为 Fake-IP、路由经过 FlClash；研究者关闭 TUN 后恢复校园网地址及 wlan0 路由，再启动上述独立批次。首轮和额外诊断不混入成功率，成本证据分别保留。[首轮请求](runs/two-phase-magpie-dev2/alfworld.html) · [连接诊断](runs/two-phase-magpie-dev2/connection-check.json)
+
+以下真实模型结果属于当时的协议；旧 `native-tools-v1` 可读和可导出，不能由当前运行器续跑，也不是新两阶段协议的实机验收证据。
+
+## 六配置原生工具协议
+
+本节保留旧 `native-tools-v1` 工具协议的接口验收。下列数据和轨迹对应当时版本，不改写为当前两阶段流程。[定义与历史边界](../../DISCUSSION.md#function-tool-的定义与执行绑定)
+
+关闭 FlClash TUN 后，Magpie 恢复调用 `tongji/DeepSeek-V4.1-Flash`。EO、PE-S、PE-D-F/S 和 PC-F/S 分别从同一 ALFWorld `dev/2` 游戏初态执行「把遥控器放在沙发上」，共用 12 个真实环境步上限。六组均收到原生终局，奖励均为 1。六组正式记录合计 25 次环境派发、41 次模型请求、41,367 个 API 报告 token。[六组可视化轨迹](runs/native-tools-magpie-dev2/alfworld.html) · [正式清单](runs/native-tools-magpie-dev2/manifest.json) · [实施与验收条件](protocol-design.md)
+
+| 配置 | 原生奖励 | 实际环境步 | Planner 请求 | Executor 请求 | 总 token |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EO | 1 | 4 | 0 | 4 | 2,282 |
+| PE-S | 1 | 5 | 1 | 6 | 6,884 |
+| PE-D-F | 1 | 4 | 1 | 5 | 7,100 |
+| PE-D-S | 1 | 4 | 1 | 5 | 5,799 |
+| PC-S | 1 | 4 | 5 | 4 | 9,401 |
+| PC-F | 1 | 4 | 5 | 4 | 9,901 |
+
+PC-S 三次换段；PC-F 保持第一阶段一次，再从阶段 1 推进到 2、3。两种 PC 都在原生终局后完成一次只读判断。两种 PE-D 均只调用了初始 `request_plan`。首轮 PE-D-S 把搜索、拾取和放置合并为一份子计划。收紧提示后仅补验 PE-D-S，Planner 首轮只交付「定位遥控器」，Executor 自主走完四步并获 1 分，未再调用规划工具。在线二次重规划由离线夹具覆盖；此次实机任务未触发该分支。[PE-D-S 补验轨迹](runs/native-tools-magpie-dev2-subplan-check/alfworld.html) · [补验清单](runs/native-tools-magpie-dev2-subplan-check/manifest.json)
+
+关闭 TUN 前的一轮请求均被同济上游以 HTTP 403「当前网络环境不支持」拒绝，各组在首个请求停止，均为缺评。[早期请求记录](runs/native-tools-acceptance/alfworld.html)
+
+## 旧四配置实验
+
+[实施前协议快照](protocol-review.html)按架构展示旧协议的交付关系与字段。共用返回规则、对照及审查点独立展示。[18 项讨论](../../DISCUSSION.md#规划覆盖范围与控制权)保留修改依据，[旧实验结束建议](finish-advice.md)可逐条核对原话、环境证据、停止原因及分数。
 
 [打开 ALFWorld 完整结果页](alfworld.html)：集中查看最新 134 个测试任务、四模型与四框架的 2,144 条有效评分，以及可选择、可对比的交互轨迹。下文保留单任务接口验收、各套评测范围与原始证据。
 
@@ -29,7 +81,9 @@ EO、PE-S、PE-D 和 PC 在同一 ALFWorld `dev/2` 初态上各完成一次真�
 
 `runs/` 为本地证据。审查页内嵌了公开事件与模型响应，可以离线查看。源文件、运行清单和原始 JSON 的链接依赖本地仓库目录。
 
-当前工作区的[框架实现](../../src/toolkit/README.md#四种运行框架)已将任务上下文与日志元数据、运行器技术限制分开。执行额度等限制只由运行器执行和记录，不告知模型。Planner 改用高层规划提示词，Executor 从[环境接口](../../src/toolkit/README.md#统一提示词)获取当前候选动作；候选目录与 Planner 的原始观察分开。历史运行的原始 prompt 保持原样，不按新规则改写。这些协议修改未重跑实验，也未核验它们对既有结果的影响。
+当前工作区的[框架实现](../../src/toolkit/README.md#四种运行框架)已将任务上下文与日志元数据、运行器技术限制分开。执行额度等限制只由运行器执行和记录，不告知模型。Planner 改用高层规划提示词，Executor 从[环境接口](../../src/toolkit/README.md#统一提示词)获取当前候选动作；候选目录与 Planner 的原始观察分开。历史运行的原始 prompt 保持原样，不按新规则改写。这些协议修改未重跑旧正式比较，也未核验它们对既有结果的影响。
+
+旧正式 EO 轨迹 `alfworld-test-01/trials/m1-t1-eo.json` 的 event 3 抽样确认：完整请求未附 `Available actions` 列表。后来的接口验收请求与当前离线构造包含动态列表，两类输入不能混为同一版本。本轮仅抽查一条旧正式轨迹，不外推整批，也未补写或重跑历史请求。[证据与当前注入位置](../../DISCUSSION.md#planner-能力说明与动作接口)
 
 ## 完整测试集评测
 
@@ -52,7 +106,7 @@ python -m http.server 4174 --bind 127.0.0.1 --directory experiments/planner-cent
 
 </details>
 
-ALFWorld 官方测试集评分已结束。正式验收页按原生判定、配对任务和模型用量汇总。WebShop 和 ScienceWorld 按研究者决定停止。Terminal-Bench 在已出有效分数均为零后终止，原始结果供人工核验。比较快照保留四套已有轨迹及各自的范围。[正式验收 HTML](audit.html) · [四套配对比较 HTML](audit-preview.html) · [评测协议](../../src/recipe/planner-centered/README.md#完整测试集) · [已中断的开发预跑](runs/benchmark-01/manifest.json)
+ALFWorld 官方测试集评分已结束。正式验收页按原生判定、配对任务和模型用量汇总。WebShop 和 ScienceWorld 按研究者决定停止。Terminal-Bench 在已出有效分数均为零后终止，原始结果供人工核验。比较快照保留四套已有轨迹及各自的范围。[正式验收 HTML](audit.html) · [四套配对比较 HTML](audit-preview.html) · [评测协议](../../src/recipe/planner-centered/README.md#历史完整测试集) · [已中断的开发预跑](runs/benchmark-01/manifest.json)
 
 `audit-preview.html` 是从本地保存轨迹重新导出的派生比较页，约 4.2 MB，与 `runs/`、ALFWorld 导出数据一样保留本地，不纳入 Git。使用 Recipe 说明中的 `preview.py --alfworld-run alfworld-test-01-recovery-03` 可重新生成；这只读取既有记录，不重跑模型。
 

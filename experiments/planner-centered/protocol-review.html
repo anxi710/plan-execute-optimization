@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="依据当前代码查看 EO、PE-S、PE-D 和 PC 的协议、字段与实际交付路径。">
+<meta name="description" content="查看原生工具协议实施前的四配置协议、字段与交付路径。">
 <title>四种规划框架 · 协议审查</title>
 <style>
   :root {
@@ -128,7 +128,7 @@
   <header class="review-header">
     <h1>四框架协议审查</h1>
     <span>核对 Planner 生成、运行器保存与 Executor 接收的内容。</span>
-    <span class="text-small text-muted">当前工作区源码 · 基线 992311a · 2026-11-20</span>
+    <span class="text-small text-muted">实施前协议快照 · 818453e · 2026-11-20</span>
   </header>
   <input id="protocol-mode" type="hidden" value="pc">
   <noscript><p class="noscript">此页需要 JavaScript 展示字段与交付图。请在浏览器中允许 JavaScript 后重新打开。</p></noscript>
@@ -545,7 +545,7 @@ run_framework(mode="pe-s")
       ['Recipe 追加标识','run_id, task_id, trial_id, arm, model, attempt 等','save_trial 给记录和事件附加；不进入模型 prompt'],
       ['环境 State','reward, finished, success, terminate_reason, error, steps, incomplete, history, action_trace','持续执行状态；history 才是 Executor 模型消息来源']
     ]);
-  el('review-points').innerHTML = table(['编号','当前代码事实','待你判断的协议选择'],[
+  el('review-points').innerHTML = table(['编号','旧协议行为','原审查问题'],[
     ['P1','PC 同时要求独立 <plan> 和 stage_objective；阶段目标确由 Planner 生成','按阶段目标就是 sub-plan 的定义，是否去掉独立 full-plan 输出'],
     ['P2','PC 还单列 soft_guidance；<plan> 不给 Executor','阶段子计划是否只保留一个交付字段；soft_guidance 是否必要'],
     ['P3','PE-D 与 PC 均按固定累计调用轮数返回','阶段完成/取证结束与固定安全返回边界如何区分'],
@@ -592,7 +592,7 @@ run_framework(mode="pe-s")
     ['PE-D','完整剩余计划 + guide','整份提取后的计划','累计 Executor 调用数到固定边界'],
     ['PC','完整剩余计划 + 阶段目标 + 可选提示','阶段目标、提示、所选证据；不含完整计划','同一固定边界；终局后还可能收尾调用']
   ]);
-  el('stage-boundary-facts').innerHTML=table(['阶段边界项','当前实现'],[
+  el('stage-boundary-facts').innerHTML=table(['阶段边界项','旧协议行为'],[
     ['阶段完成判定','没有判断 stage_objective 是否完成'],
     ['Executor 阶段返回动作','没有 stage_complete / return_to_planner'],
     ['计数','格式错误也计入 Executor 调用数与环境动作轮'],
