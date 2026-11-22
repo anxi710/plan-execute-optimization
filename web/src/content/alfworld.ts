@@ -7,7 +7,7 @@ export interface Trial {
 
 export interface AlfworldIndex {
   schemaVersion: number; runId: string; benchmark: string;
-  selection?: string; split?: string; protocolVersion?: string | null; manifestUrl?: string;
+  selection?: string; split?: string; protocolVersion: string; manifestUrl: string;
   models: string[]; modes: string[];
   tasks: { id: string; goal: string; family?: string; initial?: string }[];
   budget: Record<string, unknown>; trials: Trial[];
@@ -36,8 +36,6 @@ export interface Trace {
 export const protocols: Record<string, string> = {
   eo: 'Executor 根据任务与环境反馈自主执行，没有外部 Planner。',
   'pe-s': 'Planner 在执行前交付一次整体计划，Executor 依此完成整项任务。',
-  'pe-d': 'Planner 在返回边界修订剩余整体计划，Executor 续接同一个整项任务请求。',
-  pc: 'Planner 根据执行反馈更新计划，并向 Executor 委派新的有界阶段。',
   'pe-d-f': 'Executor 通过原生工具按需请求修订剩余全局计划。',
   'pe-d-s': 'Executor 通过原生工具按需取得下一份子计划，继续负责整项任务。',
   'pc-f': 'Planner 制定带编号的全局计划，每次执行一个动作后监控并更新活动阶段。',

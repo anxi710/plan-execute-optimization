@@ -23,7 +23,7 @@ def load_trace(path):
 
 
 def load_records(results_dir, task_id, sample_id=None, *, status="all"):
-    """Read either the legacy task file or samples from one task directory."""
+    """Read samples from one task directory."""
     results_dir, task_id = Path(results_dir), str(task_id)
     if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
         raise ValueError("Expected a path-safe task ID")
@@ -31,26 +31,15 @@ def load_records(results_dir, task_id, sample_id=None, *, status="all"):
         raise ValueError("Sample ID must be a non-negative integer")
     if status not in ("all", "success", "failure"):
         raise ValueError(f"Unsupported trajectory status: {status}")
-    legacy_path = results_dir / f"{task_id}.json"
     sample_dir = results_dir / task_id
-    if legacy_path.exists() and sample_dir.exists():
-        raise ValueError(f"Ambiguous trajectory layout for task {task_id}: "
-                         f"both {legacy_path} and {sample_dir} exist")
-    if legacy_path.is_file():
-        if sample_id not in (None, 0):
-            raise ValueError(f"No trajectory for task {task_id}, sample {sample_id}")
-        paths = [(0, legacy_path)]
-    elif sample_dir.is_dir():
-        paths = []
-        for path in sample_dir.glob("sample_*.json"):
-            match = re.fullmatch(r"sample_(0|[1-9][0-9]*)\.json", path.name)
-            if match and path.is_file():
-                index = int(match.group(1))
-                if sample_id is None or index == sample_id:
-                    paths.append((index, path))
-        paths.sort(key=lambda item: item[0])
-    else:
-        paths = []
+    paths = []
+    for path in sample_dir.glob("sample_*.json"):
+        match = re.fullmatch(r"sample_(0|[1-9][0-9]*)\.json", path.name)
+        if match and path.is_file():
+            index = int(match.group(1))
+            if sample_id is None or index == sample_id:
+                paths.append((index, path))
+    paths.sort(key=lambda item: item[0])
     if not paths:
         sample_label = f", sample {sample_id}" if sample_id is not None else ""
         raise ValueError(f"No trajectory for task {task_id}{sample_label}: {results_dir}")

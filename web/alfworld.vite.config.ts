@@ -7,7 +7,7 @@ export default defineConfig({
   base: './',
   publicDir: false,
   build: {
-    outDir: fileURLToPath(new URL('../experiments/planner-centered', import.meta.url)),
+    outDir: fileURLToPath(new URL('../experiments/planner-centered-v2', import.meta.url)),
     // The output directory also contains original experiment evidence.
     emptyOutDir: false,
     assetsDir: 'alfworld/assets',

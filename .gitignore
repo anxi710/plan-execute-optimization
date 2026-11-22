@@ -10,3 +10,7 @@ __pycache__/
 /experiments/planner-centered/alfworld/
 /experiments/planner-centered/alfworld.html
 /experiments/planner-centered/audit-preview.html
+
+/experiments/planner-centered-v2/runs/
+/experiments/planner-centered-v2/alfworld/
+/experiments/planner-centered-v2/alfworld.html

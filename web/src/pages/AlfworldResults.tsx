@@ -43,7 +43,7 @@ function useJson<T>(url: string) {
 }
 
 function LoadError({ error, reload, index = false }: { error: string; reload: () => void; index?: boolean }) {
-  return <Alert type="error" showIcon title={index ? '实验数据尚未就绪' : '轨迹读取失败'} description={<><p>{error}。{index ? '请先在仓库根目录运行本地导出命令，再重试。' : '请重试，或重新导出本地数据。'}</p>{index && <code>/home/anxi/tools/miniconda3/envs/plan-test/bin/python src/recipe/planner-centered/export_alfworld.py</code>}<p><Button onClick={reload}>重新读取</Button></p></>} />;
+  return <Alert type="error" showIcon title={index ? '实验数据尚未就绪' : '轨迹读取失败'} description={<><p>{error}。{index ? '请先在仓库根目录运行本地导出命令，再重试。' : '请重试，或重新导出本地数据。'}</p>{index && <code>python src/recipe/planner-centered/export_alfworld.py --run-dir experiments/planner-centered-v2/runs/&lt;run-name&gt;</code>}<p><Button onClick={reload}>重新读取</Button></p></>} />;
 }
 
 function Analysis({ data }: { data: AlfworldIndex }) {
@@ -71,7 +71,7 @@ function Analysis({ data }: { data: AlfworldIndex }) {
         <p className="aw-muted">运行批次 {data.runId} · {data.split} · {data.protocolVersion}。每种架构从同一任务初态独立开始。原生评分用于本次验收。</p>
       </> : <>
         <h2>完整测试集中的架构表现</h2>
-        <p>最终合并结果覆盖全部 {data.tasks.length} 个任务。各架构使用同一组任务进行比较。</p>
+        <p>本次运行包含 {data.tasks.length} 个任务。各架构使用同一组任务进行比较。</p>
         <p className="aw-muted">单次运行只提供各任务、模型和架构的一条最终评分。</p>
       </>}
     </section>
@@ -98,7 +98,7 @@ function Analysis({ data }: { data: AlfworldIndex }) {
     <section className="aw-protocol-analysis"><h2>协议终止</h2><p>各架构在 {data.tasks.length} 条轨迹中因协议错误停止的次数。</p><div className="aw-paired"><table><thead><tr><th>模型</th>{data.modes.map(mode => <th key={mode}>{modeName(mode)}</th>)}</tr></thead><tbody>{protocolRows.map(row => <tr key={row.model}><th>{row.model}</th>{row.counts.map((count, i) => <td key={i}>{count}</td>)}</tr>)}</tbody></table></div></section>
     <div className="aw-analysis-grid aw-limitations">
       <section><h2>未成功的轨迹停在哪里？</h2><p className="aw-muted">停止原因只描述运行结束位置，不能独立证明失败机制。</p><ul className="aw-failure-list">{failures.map(([reason, count]) => <li key={reason}><span>{reason}</span><strong>{count}</strong></li>)}</ul></section>
-      <section><h2>比较范围与证据边界</h2><ul><li>ALFWorld 已评分轨迹在原生 won 标志为真时计 1 分，其余计 0 分。</li><li>各架构共用任务与执行额度，Planner 与 Executor 使用同一基座模型。</li>{singleTask ? <li>每种架构保留一个任务实例，用于核对执行协议与轨迹。</li> : <li>补跑针对外部错误导致的缺评，保留有效评分与归档成本。</li>}</ul><details><summary>本轮预算与数据来源</summary><ReadableContent value={data.budget} /><a href={data.manifestUrl ?? 'runs/alfworld-test-01-recovery-03/manifest.json'}>查看 ALFWorld 运行清单 <ArrowRightOutlined /></a></details></section>
+      <section><h2>比较范围与证据边界</h2><ul><li>ALFWorld 已评分轨迹在原生 won 标志为真时计 1 分，其余计 0 分。</li><li>各架构共用任务与执行额度，Planner 与 Executor 使用同一基座模型。</li>{singleTask ? <li>每种架构保留一个任务实例，用于核对执行协议与轨迹。</li> : <li>统计本次运行的有效评分与缺评，并计入归档尝试的成本。</li>}</ul><details><summary>本轮预算与数据来源</summary><ReadableContent value={data.budget} /><a href={data.manifestUrl}>查看 ALFWorld 运行清单 <ArrowRightOutlined /></a></details></section>
     </div>
   </div>;
 }
@@ -158,7 +158,7 @@ function Results({ data }: { data: AlfworldIndex }) {
   const filtered = data.trials.filter(trial => (task === 'all' || trial.taskId === task) && (model === 'all' || trial.model === model) && (mode === 'all' || trial.mode === mode) && (outcome === 'all' || verdict(trial) === outcome) && `${trial.id} ${goals.get(trial.taskId)}`.toLowerCase().includes(query.toLowerCase()));
   const trajectorySelect = (side: 'left' | 'right') => <label className="aw-trace-select">{side === 'left' ? '左侧轨迹' : '右侧轨迹'}<Select aria-label={side === 'left' ? '左侧轨迹' : '右侧轨迹'} value={side === 'left' ? left.id : right.id} showSearch optionFilterProp="label" options={options} filterOption={(input, option) => `${option?.label} ${option?.searchText}`.toLowerCase().includes(input.toLowerCase())} onChange={value => update({ [side]: value })} /></label>;
   return <main className="alfworld-results">
-    <header className="aw-page-header"><div><h1>ALFWorld 实验结果</h1><p>{data.selection === 'single_task' ? '单任务真实环境验收' : '完整测试集'} · {data.tasks.length} 个任务 × {data.models.length} 个模型 × {data.modes.length} 种架构 · {integer(data.trials.filter(trial => trial.score !== null).length)} 条有效评分{data.trials.some(trial => trial.score === null) && ` · ${data.trials.filter(trial => trial.score === null).length} 条缺评`}</p></div><a href={data.manifestUrl ?? "audit.html"}>{data.manifestUrl ? "查看运行清单" : "返回运行审查"} <ArrowRightOutlined /></a></header>
+    <header className="aw-page-header"><div><h1>ALFWorld 实验结果</h1><p>{data.selection === 'single_task' ? '单任务真实环境验收' : '完整测试集'} · {data.tasks.length} 个任务 × {data.models.length} 个模型 × {data.modes.length} 种架构 · {integer(data.trials.filter(trial => trial.score !== null).length)} 条有效评分{data.trials.some(trial => trial.score === null) && ` · ${data.trials.filter(trial => trial.score === null).length} 条缺评`}</p></div><a href={data.manifestUrl}>查看运行清单 <ArrowRightOutlined /></a></header>
     <Tabs className="aw-tabs" activeKey={tab} onChange={value => update({ tab: value })} items={[
       { key: 'analysis', label: '结果分析', children: <Analysis data={data} /> },
       { key: 'read', label: '轨迹阅读', children: <>
@@ -181,6 +181,6 @@ export default function AlfworldResults() {
   const { data, error, reload } = useJson<AlfworldIndex>('alfworld/data/index.json');
   if (error) return <LoadError error={error} reload={reload} index />;
   if (!data) return <div className="aw-loading"><Spin /> 正在读取 ALFWorld 结果…</div>;
-  if (data.schemaVersion !== 1 || !data.trials?.length) return <LoadError error="结果索引版本不受支持或缺少轨迹" reload={reload} index />;
+  if (data.schemaVersion !== 1 || data.protocolVersion !== 'two-phase-v3' || !data.trials?.length) return <LoadError error="结果索引版本不受支持或缺少轨迹" reload={reload} index />;
   return <Results data={data} />;
 }

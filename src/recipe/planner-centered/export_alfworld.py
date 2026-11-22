@@ -10,22 +10,22 @@ from tempfile import TemporaryDirectory
 from urllib.parse import quote
 
 from report import EVENT_NAMES, ROOT, feedback_label, manifest_modes, matched_trials, reason_label
+from toolkit.frameworks import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL
 from toolkit.utils.files import read_json, write_text_atomic
 
 
-DEFAULT_RUN = ROOT / "experiments/planner-centered/runs/alfworld-test-01-recovery-03"
-DEFAULT_OUTPUT = ROOT / "experiments/planner-centered/alfworld/data"
-PC_MODES = {"pc", "pc-s", "pc-f"}
-NEW_BOUNDARIES = {
+PC_MODES = {"pc-s", "pc-f"}
+BOUNDARIES = {
     "model_tool_result": ("R", "返回原生工具结果"),
     "stage_result": ("R", "记录上一阶段结果"),
 }
 
 
 def interaction_trace(record):
+    if record.get("protocol_version") != FRAMEWORK_PROTOCOL or record.get("mode") not in FRAMEWORK_MODES:
+        raise ValueError("Expected a current-protocol trajectory")
     requests = {}
     phases = {}
-    numbered_observations = any("observation_id" in event for event in record["events"])
     for event in record["events"]:
         if event["type"] == "execution_request" and event.get("request_id") not in requests:
             requests[event.get("request_id")] = (f"阶段 {len(requests) + 1}" if record["mode"] in PC_MODES
@@ -50,8 +50,12 @@ def interaction_trace(record):
             role = event["role"]
             item.update(kind="call", role=role, marker="P" if role == "planner" else "E", title=f"{role.title()} 调用",
                         messages=event["messages"],
-                        output=response.get("text") or "")
+                        output=response.get("text") or "", response=event.get("response"))
             options = event.get("request_options") or {}
+            if options:
+                item["requestOptions"] = options
+            if event.get("context_window"):
+                item["contextWindow"] = event["context_window"]
             if options.get("tools"):
                 item["tools"] = options["tools"]
                 item["toolChoice"] = options.get("tool_choice")
@@ -63,10 +67,10 @@ def interaction_trace(record):
             if event.get("error"):
                 item["content"] = f"调用未取得回复：{event['error']}"
         elif kind == "initial_observation":
-            item.update(kind="observation", title="任务与初始环境", content=event["observation"])
+            item.update(kind="observation", title="初始环境观察", content=event["observation"])
         elif kind == "tool_event":
             action = event.get("action")
-            dispatched = event.get("dispatched", action is not None)
+            dispatched = event["dispatched"]
             title = "环境反馈" if event.get("valid") else ("环境拒绝动作" if dispatched else "动作未派发")
             item.update(kind="observation", title=title,
                         content=f"动作：{action or '未解析出可执行动作'}\n\n{event.get('observation', '')}")
@@ -78,25 +82,25 @@ def interaction_trace(record):
                              "review": "Planner 只读收尾", "submit": "Planner 提交任务"}.get(decision, decision)
             if event.get("read_only"):
                 item["title"] = "Planner 只读收尾"
-            item["content"] = "\n\n".join(filter(None, [event.get("thinking_summary"), event.get("stage_objective")]))
+            item["content"] = "\n\n".join(filter(None, [event.get("assessment"), event.get("stage_objective")]))
         elif kind == "execution_request":
             if event.get("stage_objective"):
                 item["marker"] = "D"
-            elif event.get("soft_guidance") or event.get("plan"):
+            elif event.get("plan"):
                 item["marker"] = "G"
             if record["mode"] == "pe-d-s":
                 item["marker"] = "G"
             if record["mode"] in PC_MODES:
                 item["title"] = f"委派{item.get('requestId', '当前阶段')}"
-            elif record["mode"] in {"pe-d", "pe-d-f"} and event.get("plan_version", 0) > 1:
+            elif record["mode"] == "pe-d-f" and event.get("plan_version", 0) > 1:
                 item["title"] = "修订剩余整体规划，续接同一任务"
             elif record["mode"] == "pe-d-s":
                 item["title"] = "交付子计划，续接同一整项任务"
-            elif record["mode"] in {"pe-s", "pe-d", "pe-d-f"}:
+            elif record["mode"] in {"pe-s", "pe-d-f"}:
                 item["title"] = "交付整体规划，执行整项任务"
             else:
                 item["title"] = "开始整任务执行"
-            directive = event.get("stage_objective") or event.get("plan") or event.get("soft_guidance")
+            directive = event.get("stage_objective") or event.get("plan")
             if isinstance(directive, list):
                 directive = "\n".join(f"{stage['id']}. {stage['stage_objective']}\n完成条件：{stage['completion_condition']}"
                                       for stage in directive)
@@ -116,8 +120,8 @@ def interaction_trace(record):
             native = event["reward"]
             verdict = "缺评" if native is None else f"{'成功' if event['success'] else '失败'} · 得分 {native}"
             item.update(marker="V", title="环境原生评分", content=verdict)
-        elif kind in NEW_BOUNDARIES:
-            marker, title = NEW_BOUNDARIES[kind]
+        elif kind in BOUNDARIES:
+            marker, title = BOUNDARIES[kind]
             item.update(marker=marker, title=title)
             if kind == "model_tool_result":
                 item["title"] = f"{title} · {event['name']}"
@@ -126,9 +130,8 @@ def interaction_trace(record):
                 stage_result = {"verified": "已验证", "blocked": "受阻", "replaced": "已替换"}.get(event["status"],
                                                                                                   event["status"])
                 evidence = "、".join(map(str, event["evidence_refs"])) or "—"
-                evidence_label = "观察编号" if numbered_observations else "证据事件"
-                item["content"] = (f"{stage_result} · {event['stage']['stage_objective']}\n{event['thinking_summary']}"
-                                   f"\n{evidence_label} {evidence}")
+                item["content"] = (f"{stage_result} · {event['stage']['stage_objective']}\n{event['assessment']}"
+                                   f"\n观察编号 {evidence}")
         else:
             item["title"] = EVENT_NAMES.get(kind, kind)
         if "observation_id" in event:
@@ -142,7 +145,7 @@ def write_payload(path, payload):
     write_text_atomic(path, json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
-def export_alfworld(run_dir=DEFAULT_RUN, output=None, *, standalone=False):
+def export_alfworld(run_dir, output=None, *, standalone=False):
     run_dir = Path(run_dir)
     manifest = read_json(run_dir / "manifest.json")
     benchmark = manifest["benchmark"]
@@ -155,31 +158,28 @@ def export_alfworld(run_dir=DEFAULT_RUN, output=None, *, standalone=False):
     if standalone and not single_task:
         raise ValueError("The self-contained page is for single-task ALFWorld runs")
     if output is None:
-        output = run_dir / "alfworld.html" if standalone else run_dir / "alfworld/data" if single_task else DEFAULT_OUTPUT
+        output = run_dir / "alfworld.html" if standalone else run_dir / "alfworld/data"
     output = Path(output)
     trials = matched_trials(run_dir, manifest)
-    if any((full_test and trial.score is None) or not trial.has_record or any(path is None for path in trial.past)
+    if any(not trial.has_record or any(path is None for path in trial.past)
            for trial in trials.values()):
         raise ValueError("The ALFWorld export requires all final trajectories and all archived cost evidence")
     budget = manifest["budget"]
     index = {
         "schemaVersion": 1, "runId": manifest["run_id"], "benchmark": benchmark["name"],
-        "selection": selection, "protocolVersion": manifest.get("protocol_version"), "split": benchmark.get("split"),
+        "selection": selection, "protocolVersion": manifest["protocol_version"], "split": benchmark.get("split"),
         "models": manifest["model_order"], "modes": manifest_modes(manifest),
         "tasks": [{"id": task["task_id"], "goal": task["goal"], "family": task.get("family", ""),
                    "initial": task.get("task", "")} for task in benchmark["tasks"]],
-        "budget": {("environmentStepLimit" if budget.get("unit") == "real_environment_dispatch"
-                    else "executorLimit"): budget["executor_limit"],
-                   **({"plannerLimits": budget["planner_limits"]} if "planner_limits" in budget else {}),
-                   **({"returnEvery": budget["return_every"]} if "return_every" in budget else {}),
+        "budget": {"environmentStepLimit": budget["executor_limit"],
+                   "contextWindow": budget["context_window"],
                    "plannerMaxTokens": {model: settings["planner"]["max_tokens"]
                                         for model, settings in manifest.get("models", {}).items()}},
         "trials": [],
     }
     traces = {}
-    if single_task:
-        page_dir = output.parent if standalone else output.parent.parent
-        index["manifestUrl"] = quote(os.path.relpath(run_dir / "manifest.json", page_dir))
+    page_dir = output.parent if standalone else output.parent.parent
+    index["manifestUrl"] = quote(os.path.relpath(run_dir / "manifest.json", page_dir))
     for trial_id, scheduled in manifest["trials"].items():
         if not re.fullmatch(r"[A-Za-z0-9_-]+", trial_id):
             raise ValueError(f"Invalid trial export filename: {trial_id}")
@@ -237,7 +237,7 @@ def write_standalone(output, dataset):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN)
+    parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, help="Data directory, or HTML filename with --standalone.")
     parser.add_argument("--standalone", action="store_true", help="Build a single-task viewer that opens offline.")
     args = parser.parse_args()

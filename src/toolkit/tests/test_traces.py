@@ -35,11 +35,27 @@ class TraceTest(unittest.TestCase):
             self.assertEqual(prefix[0]["content"], "Find a cup.")
             self.assertTrue(pairs[0][1]["content"].startswith(observation))
             self.assertIn("take cup from cupboard", pairs[0][1]["content"])
-            legacy, = load_records(root, 3, sample_id=0)
-            self.assertEqual(conversation_parts(legacy)[0][0]["content"], "Find a cup.")
+            first_sample, = load_records(root, 3, sample_id=0)
+            self.assertEqual(conversation_parts(first_sample)[0][0]["content"], "Find a cup.")
             record["trace"][0]["observation"] = "Observation: Something else."
             with self.assertRaisesRegex(ValueError, "Trace/history observation mismatch"):
                 conversation_parts(record)
+
+    def test_reads_only_sample_directories_and_preserves_archived_task_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task_file = root / "3.json"
+            archived = State(finished=True, success=True).to_dict()
+            write_json(task_file, archived)
+            with self.assertRaisesRegex(ValueError, "No trajectory for task 3"):
+                load_records(root, 3)
+            sample = State(finished=True, success=False).to_dict()
+            sample[-1].update(task_id=3, sample_id=2)
+            write_json(root / "3" / "sample_2.json", sample)
+            record, = load_records(root, 3)
+            self.assertEqual(record["sample_id"], 2)
+            self.assertFalse(record["success"])
+            self.assertEqual(load_trace(task_file)["success"], True)
 
     def test_rejects_an_incomplete_trace_and_path_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
