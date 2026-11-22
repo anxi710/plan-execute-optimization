@@ -1,9 +1,11 @@
 import { createRoot } from 'react-dom/client';
 import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, HashRouter } from 'react-router-dom';
 import AlfworldResults from './pages/AlfworldResults';
 import './styles.css';
+
+const Router = document.getElementById('alfworld-data') ? HashRouter : BrowserRouter;
 
 createRoot(document.getElementById('root')!).render(
   <ConfigProvider locale={zhCN} theme={{
@@ -15,6 +17,6 @@ createRoot(document.getElementById('root')!).render(
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
     },
   }}>
-    <BrowserRouter><div className="alfworld-standalone"><AlfworldResults /></div></BrowserRouter>
+    <Router><div className="alfworld-standalone"><AlfworldResults /></div></Router>
   </ConfigProvider>,
 );

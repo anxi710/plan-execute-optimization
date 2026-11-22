@@ -66,7 +66,7 @@ test('reads all four ALFWorld protocols, filters results and follows interaction
     await expect(reader.locator('.aw-prompt-message pre.aw-raw-text').first()).toBeVisible()
     await expect(reader.getByRole('heading', { name: '原始 response', exact: true }).first()).toBeVisible()
     const calls = await expectRawCalls(page, reader, `m1-t3-${mode}`)
-    expect(calls.some(call => call.messages?.some(message => message.content.startsWith('Interact with a household to solve a task.')))).toBe(true)
+    expect(calls.some(call => call.messages?.some(message => message.content?.startsWith('Interact with a household to solve a task.')))).toBe(true)
     expect(calls.some(call => call.messages?.some(message => message.role === 'assistant'))).toBe(true)
     const markers = await reader.locator('.aw-timeline .aw-node').allTextContents()
     expect(markers.length).toBeGreaterThan(0)

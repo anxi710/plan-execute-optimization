@@ -26,8 +26,10 @@
 .aw-bar-track { background: var(--ctp-surface0); height: 12px; overflow: hidden; border-radius: 3px; }
 .aw-bar-track > div { background: var(--ctp-lavender); height: 100%; }
 .aw-mode-pe-s .aw-bar-track > div { background: var(--ctp-blue); }
-.aw-mode-pe-d .aw-bar-track > div { background: var(--ctp-teal); }
-.aw-mode-pc .aw-bar-track > div { background: var(--ctp-mauve); }
+.aw-mode-pe-d .aw-bar-track > div, .aw-mode-pe-d-f .aw-bar-track > div { background: var(--ctp-teal); }
+.aw-mode-pe-d-s .aw-bar-track > div { background: var(--ctp-green); }
+.aw-mode-pc .aw-bar-track > div, .aw-mode-pc-f .aw-bar-track > div { background: var(--ctp-mauve); }
+.aw-mode-pc-s .aw-bar-track > div { background: var(--ctp-pink); }
 .aw-paired table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .aw-paired td, .aw-paired th { padding: 12px 8px; text-align: right; border-bottom: 1px solid var(--ctp-surface0); }
 .aw-paired th:first-child { text-align: left; }
@@ -80,7 +82,9 @@
 .aw-output { background: var(--ctp-mantle); padding: 18px 20px; border-radius: 10px; margin-top: 18px; }
 .aw-output h4 { color: var(--ctp-text); }
 .aw-prompt-message { padding: 16px 0; border-top: 1px solid var(--ctp-surface0); }
-.aw-prompt-message h5 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--ctp-subtext0); }
+.aw-prompt-message h5, .aw-tool-call h5 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--ctp-subtext0); }
+.aw-tool-call { padding: 10px 14px; margin-top: 12px; border-left: 2px solid var(--ctp-mauve); }
+.aw-phase { color: var(--ctp-lavender); }
 .aw-raw-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; font: 14px/1.8 ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .aw-reasoning { margin-top: 18px; }
 .aw-call-note { color: #f38ba8; margin-top: 12px; }
