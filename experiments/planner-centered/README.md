@@ -2,7 +2,9 @@
 
 ## 两阶段运行协议
 
-当前代码使用 `two-phase-v2`：两阶段控制流不变，恢复完整交互历史和原始 Executor 回复，观察另按环境反馈从 1 连续编号；去重初始任务目标，区分 PE-S／PE-D 提示，已完成阶段不再回放整段判断。环境动作接口、原生求助说明及普通 JSON 输出协议暂不变。独立 Hard constraints 已删除，任务原文要求保留。本轮只进行离线与无模型后端检查，未重跑实机。[当前实现与运行方式](../../src/recipe/planner-centered/README.md) · [实施与验收条件](protocol-design.md)
+本目录保留旧四配置、`native-tools-v1` 与两阶段早期版本的历史证据。当前新实验为 [planner-centered-v2](../planner-centered-v2/README.md)，采用 `two-phase-v3`，旧成绩不导入新实验。
+
+当前运行、导出与报告代码不再兼容本目录旧协议。保留的静态页面和原始记录不改写；重现或重新生成历史产物需检出对应运行当时的代码与补丁。下文所有版本、预算、设置与结果均按当时记录解释。
 
 ### two-phase-v1 实机验收
 
@@ -31,7 +33,7 @@ PE-D-S 的第三份子计划仅要求移动到沙发；Executor 到达后直接�
 
 首轮六配置都在首次请求收到上游 HTTP 403，零环境步、全部缺评；另一次最多 1 输出 token 的连接诊断同样被拒绝，未返回用量。核查时同济域名解析为 Fake-IP、路由经过 FlClash；研究者关闭 TUN 后恢复校园网地址及 wlan0 路由，再启动上述独立批次。首轮和额外诊断不混入成功率，成本证据分别保留。[首轮请求](runs/two-phase-magpie-dev2/alfworld.html) · [连接诊断](runs/two-phase-magpie-dev2/connection-check.json)
 
-以下真实模型结果属于当时的协议；旧 `native-tools-v1` 可读和可导出，不能由当前运行器续跑，也不是新两阶段协议的实机验收证据。
+以下真实模型结果属于当时的协议；旧 `native-tools-v1` 的原始文件和当时导出页保留，不能由当前代码续跑或重新导出，也不是新两阶段协议的实机验收证据。
 
 ## 六配置原生工具协议
 
@@ -108,13 +110,13 @@ python -m http.server 4174 --bind 127.0.0.1 --directory experiments/planner-cent
 
 ALFWorld 官方测试集评分已结束。正式验收页按原生判定、配对任务和模型用量汇总。WebShop 和 ScienceWorld 按研究者决定停止。Terminal-Bench 在已出有效分数均为零后终止，原始结果供人工核验。比较快照保留四套已有轨迹及各自的范围。[正式验收 HTML](audit.html) · [四套配对比较 HTML](audit-preview.html) · [评测协议](../../src/recipe/planner-centered/README.md#历史完整测试集) · [已中断的开发预跑](runs/benchmark-01/manifest.json)
 
-`audit-preview.html` 是从本地保存轨迹重新导出的派生比较页，约 4.2 MB，与 `runs/`、ALFWorld 导出数据一样保留本地，不纳入 Git。使用 Recipe 说明中的 `preview.py --alfworld-run alfworld-test-01-recovery-03` 可重新生成；这只读取既有记录，不重跑模型。
+`audit-preview.html` 是从本地保存轨迹重新导出的派生比较页，约 4.2 MB，与 `runs/`、ALFWorld 导出数据一样保留本地，不纳入 Git。该派生页由当时的 `preview.py` 生成；该历史入口现已删除，重新生成需检出当时源码，不由当前代码读取旧轨迹。
 
 ALFWorld 已调度四模型、四框架、134 个正式测试任务，共 2,144 条轨迹。主机重启后从检查点续跑。一次集中启动错误发生在模型调用前，468 条原生评分保留，1,657 条启动失败记录已归档，相关任务在切换临时目录后恢复真实模型评分。恢复补丁让首个事件前的已知启动错误不占模型尝试额度。该补丁的调用在清单中单独标注。运行中以逐条轨迹检查点为准。[运行清单](runs/alfworld-test-01/manifest.json) · [启动错误原始清单](runs/alfworld-test-01/incident-20261119T093443/original-manifest.json) · [游戏映射](runs/data/alfworld/alfworld_test_gamefiles.jsonl) · [初始运行源码补丁](runs/alfworld-test-01/source.patch) · [恢复源码补丁](runs/alfworld-test-01/recovery-source.patch)
 
 首轮全部 2,144 格均有真实模型调用记录，2,034 格取得原生评分。110 格缺评，其中 99 格遇到 HTTP 429、6 格遇到服务端错误、4 格遇到连接错误、1 格超时。在所有模型与框架均有评分的 57 个共同任务上，EO、PE-S、PE-D 和 PC 的均分依次为 0.465、0.447、0.289、0.294。[首轮运行清单](runs/alfworld-test-01/manifest.json)
 
-研究者要求定向补跑仍受外部故障影响的组合。核对了首轮 2,144 条当前轨迹和 2,021 条归档尝试，确认上述 110 格涉及 77 个任务。1,657 条启动 `OSError` 中，1,554 格后来已有原生评分，其余 103 格已在补跑名单中。补跑以同一任务、模型、框架、单条额度和原生评分器为准，保留首轮证据。第一轮使用 6 路并发，无本机请求速率上限。每格增加一次尝试的请求上限合计为 1,613 次。[补跑名单](runs/alfworld-test-01-recovery-01/recovery-selection.json) · [执行入口](../../src/recipe/planner-centered/recover_alfworld.py)
+研究者要求定向补跑仍受外部故障影响的组合。核对了首轮 2,144 条当前轨迹和 2,021 条归档尝试，确认上述 110 格涉及 77 个任务。1,657 条启动 `OSError` 中，1,554 格后来已有原生评分，其余 103 格已在补跑名单中。补跑以同一任务、模型、框架、单条额度和原生评分器为准，保留首轮证据。第一轮使用 6 路并发，无本机请求速率上限。每格增加一次尝试的请求上限合计为 1,613 次。[补跑名单](runs/alfworld-test-01-recovery-01/recovery-selection.json) · 历史执行入口为当时源码中的 `recover_alfworld.py`（已从当前代码删除）
 
 第一轮实际调用覆盖全部 110 格，取得 59 条原生评分。余下 51 格均再次遇到 HTTP 429。第二轮使用 2 路并发，取得 50 条原生评分和 1 条超时。第三轮串行补回最后 1 条评分。三轮均无本机请求速率上限。合并清单保留首轮 2,034 条有效轨迹和各轮归档的原始字节，共有 2,144 条有效评分、134 个全配置共同任务。得分表只链接最终有分的轨迹，缺评格用文字标记，归档依旧计入可核对成本。[第一轮补跑清单](runs/alfworld-test-01-recovery-01/manifest.json) · [第二轮名单](runs/alfworld-test-01-recovery-02/recovery-selection-02.json) · [第三轮名单](runs/alfworld-test-01-recovery-03/recovery-selection-03.json) · [合并后的最终清单](runs/alfworld-test-01-recovery-03/manifest.json)
 

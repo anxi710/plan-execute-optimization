@@ -11,7 +11,8 @@
 ## 判断与索引
 
 - [同任务的高层战略采样](strategy-sampling/README.md)比较独立采样和提示探索其他路线，并用固定 Executor 检查路线是否在 ALFWorld 中实际发生。
-- [四框架对照评测](planner-centered/README.md)保留 ALFWorld 完整测试集结果、四套环境的已有评分，以及接口验收与交互轨迹。
+- [Planner-Centered v2](planner-centered-v2/README.md)准备独立的未训练框架性能测试，记录当前协议与待冻结设置，尚无成绩。
+- [旧四框架对照评测](planner-centered/README.md)保留 ALFWorld 完整测试集结果、四套环境的已有评分，以及接口验收与交互轨迹。
 
 比较成功率时同时检查计算和数据预算。候选方法的评价器训练、离线数据和额外调用也计入成本。报告多 seed 的波动，保留负结果和失败轨迹。具体实验要求见 [AGENTS.md](../AGENTS.md#实验)。
 

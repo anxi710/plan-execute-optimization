@@ -1,17 +1,25 @@
 import { expect, test } from '@playwright/test'
 
-test('opens the current proposal with its review and figures, and preserves historical topic evidence', async ({ page }) => {
+test('keeps the current judgment, unknowns and next step within the overview viewport', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.summary-card')).toHaveCount(3)
   const summary = await page.locator('.research-summary').boundingBox()
   expect(summary!.y + summary!.height).toBeLessThan(page.viewportSize()!.height)
   await expect(page.locator('.research-summary table')).toHaveCount(0)
-  await expect(page.locator('.stage-tag')).toContainText('提案 v0.5 通过审核')
+  await expect(page.locator('.stage-tag')).toContainText('提案 v0.6 待审核')
   await expect(page.locator('.question-card')).toHaveCount(0)
+})
+
+test('opens the current proposal with its review and figures, and preserves historical topic evidence', async ({ page }) => {
+  await page.goto('/')
   await page.getByRole('link', { name: '阅读提案', exact: true }).click()
   await expect(page).toHaveURL('/documents/PROPOSAL')
   await expect(page.getByRole('heading', { name: '2.1 Planner-Centered 的在线闭环' })).toBeVisible()
-  await expect(page.locator('.markdown-body img')).toHaveCount(6)
+  await expect(page.locator('.markdown-body')).toContainText('Research Proposal v0.6 · 本轮协议修订待审核')
+  await expect(page.locator('.markdown-body .mermaid-diagram svg')).toHaveCount(4, { timeout: 30_000 })
+  await expect(page.locator('.markdown-body')).not.toContainText('此图未能渲染')
+  await expect(page.locator('.markdown-body .mermaid-diagram').nth(2)).toContainText('request_plan')
+  await expect(page.locator('.markdown-body img')).toHaveCount(1)
   for (const image of await page.locator('.markdown-body img').all()) {
     await expect(image).toBeVisible()
     await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0)
@@ -20,6 +28,7 @@ test('opens the current proposal with its review and figures, and preserves hist
   await expect(page).toHaveURL('/documents/RESEARCH#decisions')
   await expect(page.locator('details#decisions').getByRole('row', { name: /v0\.4 内容审核/ })).toContainText('列为通过审核')
   await expect(page.locator('details#decisions').getByRole('row', { name: /v0\.5 内容审核/ })).toContainText('研究者在 Codex 对话中批准')
+  await expect(page.locator('details#decisions').getByRole('row', { name: /新实验与 v0\.6/ })).toContainText('待审核')
   await page.goto('/questions')
   await expect(page.getByRole('heading', { name: '历史问题', exact: true })).toBeVisible()
   const firstTopic = '/questions/D03'

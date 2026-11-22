@@ -4,38 +4,38 @@
 
 ## 全面审核清单
 
-审核范围：Python 核心提交 `6afb80e`、轨迹导出与查看页提交 `a719e04`，以及本轮文档修订。以下编号用于回复和回查，不表示优先级。人工验收、设计选择和研究命题分别记录；同意一个设计不代表它的效果已经证实，也不自动授权付费运行、训练或扩大实验。
+审核范围：当前工作区的新协议实现、提案 v0.6 与新实验设置。已提交的上一轮修改见 `6afb80e`、`a719e04`、`3cb3113`；这些提交不代表本轮未提交修改。以下编号保留供回查，不表示优先级。
 
-已确认的边界不重新提请决定：删除独立 Hard constraints，保留任务原文要求；直接初始规划、PE-D 原生按需求助、PC 固定单步监测；恢复完整历史、独立连续观察编号、初始目标去重、PE 模板分开及精简 verified 输入；接受本次 PE-D-S 自主完成的轨迹，工具说明保持原样，不加阶段门控；保留已填参数的动作菜单；固定 Executor、只优化 Planner。真实环境步预算、环境判终局、至多一次只读收尾与隐藏验收隔离沿用已确认规则。旧短窗口、1,800 字符摘录、强制初次求助和 PC 执行工具均已撤回。
+研究者已确认：新建 `planner-centered-v2`，旧数据保留但当前代码无需兼容；使用 ALFWorld 0.4.2 及主 requirements 固定版本；当前只测未经专项训练模型的框架表现；同步提案并记录实验协议；将判断字段改名为 `assessment`；以嵌入 prompt 的交互历史和可配置 token 窗口替代 Recipe 字节拒绝；先不设窗口容量。此前的独立约束删除、连续观察号、目标去重、PE 模板分开、精简 verified 输入、保留已实例化动作菜单和接受 PE-D-S 自主完成的决定继续有效。
 
 ### 待人工验收的实现与证据
 
-| 编号 | 当前事实 | 需要审核的内容与证据 |
+| 编号 | 当前事实 | 剩余验收内容 |
 | --- | --- | --- |
-| A1 | v2 已实现完整历史、独立观察号、目标去重、提示分开、verified 精简和独立约束删除；有离线检查，尚无 v2 模型实机轨迹。 | 最终模型输入、角色可见范围、工具配对和停止行为是否符合设想；若要实机复验，再限定任务、模型和预算。[运行实现](src/toolkit/frameworks/runtime.py) · [契约检查](src/toolkit/tests/test_framework_runtime.py) |
-| A2 | 模型客户端已迁至 role-neutral `models`，连接、模型名和推理选项由 Toolkit 默认值与 Recipe YAML 装配；新旧入口有离线检查。 | 是否认可当前配置职责与透明性；指定后端的实际请求字段是否符合预期，不由离线检查外推所有服务商。[模型实现](src/toolkit/models/openai.py) · [配置入口检查](src/recipe/planner-centered/tests/test_connection_entrypoints.py) · [配置说明](src/recipe/planner-centered/README.md#配置与单任务验收) |
-| A3 | PE-D-F 实机只有初始规划和正常执行，没有后续求助。PE-D-S 的两次调用不替代 F 范围验收。 | 选择有合理重规划理由的情形，并明确补验预算；继续由 Executor 自主触发，不强制调用凑轨迹。[原始轨迹](experiments/planner-centered/runs/two-phase-magpie-dev2-campus/trials/m5-t2-pe-d-f.json) |
-| A4 | PC 实机观察到 advance／keep；完整路线 revision、blocked／replaced、开放任务提交等边界主要由离线夹具覆盖。 | 哪些边界接受离线契约证据，哪些还需真实模型／后端轨迹；其他环境的 v2 也尚未实机验收。[框架检查](src/toolkit/tests/test_framework_runtime.py) · [Terminal 检查](src/recipe/planner-centered/tests/test_terminal_benchmark.py) |
-| A5 | 旧正式 ALFWorld 有 2,144 条原生评分；Terminal-Bench 有 167 条有效零分；已停止的 WebShop／ScienceWorld 保留既有评分。 | 人工核验报告的比较口径及有代表性的成功／失败轨迹，区分运行故障、协议失败与任务失败。只审核已有产物，不重开停止决定。[正式报告](experiments/planner-centered/audit.html) · [同任务比较](experiments/planner-centered/audit-preview.html) · [完成判断核查](experiments/planner-centered/finish-advice.md) |
-| A6 | 本次 `plan-test` 为 ALFWorld 0.3.5，更早批次为 0.4.2；v1／v2 输入与引用语义不同。WebShop 镜像与原始发布数据的一致性仍有核验限制。 | 后续固定哪个环境版本、如何解释历史结果及保留数据来源限制；不能混成相同设置的比较。[实际版本与来源](experiments/planner-centered/README.md) |
-| A7 | 已批准 v0.5 正文及配图仍含 PE-D 预定返回边界、PC 阶段返回和独立约束字段；后续实现已有修订。 | 提案正文、总览图和框架详图需要同步哪些内容，以及修订文本的审核范围。正文中“本研究的核心问题是”后未列出问题，原第 2 节锚点也缺失，结构需一并核对；原审批保留，不自动覆盖新协议。[提案及版本说明](PROPOSAL.md) · [原审核记录](RESEARCH.md#decisions) |
-| A8 | 查看页支持六配置、完整原始 prompt／response、原生工具参数、缺评、归档成本及观察引用定位。 | 人工确认展示内容和成本口径适合研究审核；构建和浏览器检查只证明功能，不代表已认可科研解释。[查看页与数据入口](experiments/planner-centered/README.md#两阶段运行协议) · [导出实现](src/recipe/planner-centered/export_alfworld.py) |
+| A1 | 当前协议 `two-phase-v3` 实现完整历史与可配置窗口、独立观察号、目标去重、提示分开和约束删除；尚无该版本模型实机轨迹。 | 最终角色输入、工具配对和停止行为。启动模型检查前仍需冻结任务、模型和预算。[框架与检查](src/toolkit/tests/test_framework_runtime.py) |
+| A2 | 通用模型客户端保持透传；Recipe 已改为 Magpie 官方 native 路径与裸上游模型名。 | 配置与真实请求的对应；非零推理 token 原因仍待实测，不能由路径推定已经关闭推理。[配置](src/recipe/planner-centered/config.yaml) |
+| A3 | 旧 PE-D-F 实机仅观察到初始规划，S 范围求助不替代 F 范围验收。 | 在有重新规划理由的任务中观察自主触发，不能强制求助凑轨迹。归入新实验验收。 |
+| A4 | PC 的 revision、blocked／replaced 等边界有离线检查；Terminal 完整后端检查依赖 Harbor。 | 区分离线契约与真实模型／环境证据。[框架检查](src/toolkit/tests/test_framework_runtime.py) |
+| A5 | 已决定独立新实验，旧成绩归档保留。 | 已回应，不再要求审核旧轨迹作为新实验前置。[新实验](experiments/planner-centered-v2/README.md) |
+| A6 | 已指定并安装 ALFWorld 0.4.2 及主 requirements 版本，真实 ALFWorld 重载／动作检查通过。 | 原 hub 版本冲突与 TextWorld wheel 标签错误已修复，pip check 及后端复查通过；WebShop 来源限制只在纳入时核查。 |
+| A7 | 提案 v0.6 已同步两阶段控制流、六配置、约束删除和当前性能测试范围。 | 审核新的正文与 Mermaid 图，原 v0.5 审批不自动覆盖本轮修改。[提案](PROPOSAL.md) |
+| A8 | 查看页与导出只处理当前协议，保留完整 prompt／response、工具参数、缺评和重试成本。 | 只核对展示与性能统计口径，当前无需学习机制的科研解释。[导出](src/recipe/planner-centered/export_alfworld.py) |
 
 ### 尚未确定的设计选择
 
-| 编号 | 需要决定的内容 | 当前边界与出处 |
+| 编号 | 当前决定与剩余问题 | 边界 |
 | --- | --- | --- |
-| D1 | 普通输出如何划分公开判断、规划和动作：`<think>` 配合 `<plan>`／`<action>`，计划内部是否继续 JSON；公开判断是否必填、如何命名。 | 仍用 JSON＋`thinking_summary` 和 `Thought:`／`Action:`。原生工具的 arguments JSON 是另一层接口，不一起替换。[格式审阅](#实机轨迹审阅上下文与输出格式) |
-| D2 | P10 的扩展解析：重复块、块顺序、Markdown 包裹、未知键、截断以及旧格式的兼容或回退。 | 按此前决定延后；不把解析成功等同于计划质量，也不在此次提交中扩大解析策略。[原讨论 P10](#审查页-p1p14-的回应) |
-| D3 | 是否把请求体预算统一到 Toolkit；按字节、token 或模型容量配置；完整历史超限时显式停止、选择窗口还是压缩；若压缩，如何保真并计入成本。 | 当前保留完整历史和现有 Recipe 字节检查，没有自动压缩。统一预算是方案，尚未实施。[当前预算边界](src/recipe/planner-centered/README.md) · [上下文讨论](#实机轨迹审阅上下文与输出格式) |
-| D4 | 阶段完成证据的充分性；后续是否需要独立阶段 verifier，其检查对象、触发条件、公开结果和成本。 | 当前 `verified` 是 Planner 判断，只校验引用等协议条件，尚未引入独立阶段语义验证。环境终局和 Terminal 的独立验收另有现成机制，不混为“没有 verifier”。[阶段判断](src/toolkit/frameworks/runtime.py) · [完成判断核查](experiments/planner-centered/finish-advice.md) |
-| D5 | 服务端推理、公开判断文本和训练文本如何对应；是否真正关闭推理，启用后如何保存和回传，哪些 token 进入 loss。 | 请求 `reasoning_effort: none` 后 usage 仍报告非零推理 token；开关实际效果未核实，完整推理字段及工具回传也未验收。[已有核查](#模型内置推理与显式思考) |
-| D6 | 暂留的 `hypotheses`／`remaining_work` 如何修订、撤销与保留，其相对完整历史和计划是否有独立用途。 | 暂时保留、空剩余工作不触发结束已确认；本项不重新询问是否立即删除，维护语义和作用仍待核验。[原讨论 P11](#审查页-p1p14-的回应) |
-| D7 | 后续正式比较的任务、模型／角色、版本、seed／重复次数、主指标、采样和预算。 | 尚未冻结下一轮协议；单任务成功不用于选择优胜框架。付费运行或扩大实验另行明确范围。[研究工作台](RESEARCH.md) · [提案实验设计](PROPOSAL.md#4-如何判断研究是否取得进展) |
+| D1 | `assessment` 是模型给出的状态／阶段判断，用于理解计划更新及其证据；不是 thinking 总结、独立 verifier 或成功裁决。计划内部继续 JSON。是否改用标签仍待讨论。 | 当前只改名，无旧字段回退；保留 `Thought:`／`Action:`，不擅自改为 `<think>` 标签。[格式讨论](#实机轨迹审阅上下文与输出格式) |
+| D2 | P10 的重复块、块顺序、Markdown 包裹、未知键和截断等扩展解析策略仍延后。 | 当前不维护旧实验输出兼容，不把解析成功当计划正确。 |
+| D3 | Toolkit 输入 token 窗口已实现，默认容量 `null`，超限淘汰最早完整交互，无自动摘要。 | 单次正文嵌入历史，保留当前原生工具交接；完整日志与窗口选择分开。默认计数为保守估计，实际用量单独记录，不累计重复历史 token。[实现](src/toolkit/models/context.py) |
+| D4 | 独立阶段语义 verifier 尚未引入；当前 `verified` 是 Planner 基于可见证据的判断。 | 环境终局与 Terminal 原生验收另有机制，不能混为没有 verifier。 |
+| D5 | 已核查并配置 Magpie native 透传。是否真正关闭推理仍待新请求验证。 | 原因假设与事实分开；本轮不进行模型调用。未来训练文本与 loss 的选择不属于当前测试前置。 |
+| D6 | `hypotheses`／`remaining_work` 暂留，空剩余工作不触发结束。 | 独立用途及修订语义仍待实测，不据此裁定任务完成。 |
+| D7 | 新实验的任务、模型、重复次数、主指标、采样和预算尚未冻结。 | 当前准备实现和协议；不自动继承旧运行授权。[设置清单](experiments/planner-centered-v2/README.md#启动前需要固定的设置) |
 
 ### 需要证据回答的研究问题
 
-这些不是通过同意或否决就能解决的问题。当前可审核工作假设、候选对照和证据边界；实验方法和预算未因此自动获批。
+研究者目前不要求回答这些问题。它们保留为后续经验研究，不是当前未训练框架测试的前置选择。当前没有本项目训练结果，不能由接口或单任务成功推断学习收益。
 
 | 编号 | 尚无结论的问题 | 当前证据与下一项可审核内容 |
 | --- | --- | --- |
@@ -48,7 +48,7 @@
 | R7 | 单任务以外的适用范围、学习收益、跨任务／模型泛化与成本收益。 | 现有接口验收和少量诊断不足以回答，需在机制和正式协议确定后评价。[最大未知](RESEARCH.md#最大未知) · [实验记录](experiments/README.md) |
 | R8 | 可用算力、训练周期与投稿条件。 | L40／48GB 只是资源规划背景，实际卡数、可用时长、训练耗时及 ICML 2027 正式截止日期尚未核实。[资源与投稿约束](RESEARCH.md#submission-constraints) |
 
-旧 Q1–Q4、P1–P14 的内容继续作为方案形成过程保存。其实现验收归 A1／A3／A4，当前格式与解析归 D1／D2，证据判断归 D4，暂留状态归 D6；已撤回的记忆窗口和工具封装不形成另一份待办。可以按编号给出“接受当前实现／修改意见／延后／补证据”，研究问题则区分同意工作假设与已有结论。
+旧 Q1–Q4、P1–P14 的内容继续作为方案形成过程保存。其实现验收归 A1／A3／A4，当前格式与解析归 D1／D2，证据判断归 D4，暂留状态归 D6；已撤回的记忆窗口和工具封装不形成另一份待办。本轮已回应的编号按上表处理，研究问题等待后续证据，不要求现在逐项判断。
 
 ## 规划多样性与执行评价
 
@@ -104,7 +104,7 @@
 | --- | --- | --- |
 | API 内置推理 | 接口通过请求字段控制服务端的推理模式或强度。 | 按接口及模型文档设置参数，并核对返回字段和用量。 |
 | 显式思考文本 | 模型在回复序列中生成的推理文字，例如 `<think>…</think>`。 | 核对 prompt、实际生成 token、动作解析与训练 mask。 |
-| 框架公开判断 | 本项目工具协议中的 `thinking_summary`，用于陈述证据和不确定性。 | 按公开输出及后续行为验收，不把字段名视为内置推理或完整 CoT 的证明。 |
+| 框架状态判断 | 当前 JSON 的 `assessment`，陈述可见状态、阶段判断及依据，帮助理解计划维持或修订。 | 它是普通生成文本，不是隐藏思考的总结，不独立裁定成功或验证阶段。 |
 
 2026-11-21 用 Chrome DevTools 核对的[同济接口文档](https://agi.tongji.edu.cn/docs/reasoning)以 `reasoning_effort` 统一控制开关和强度，`none` 表示关闭。省略参数会采用模型默认值，不支持的等级可能被重定向；支持范围仍取决于模型。该文档的示例把推理放在 `message.reasoning`，与 `content` 分开。[DeepSeek 原生 Chat Completions 文档](https://api-docs.deepseek.com/guides/thinking_mode/)则支持 `thinking.type` 开关和 `reasoning_effort` 强度，其推理字段是 `reasoning_content`。因此，接口兼容不代表扩展字段及返回字段完全一致；同一模型经不同网关调用，应以实际入口的接口约定为准。
 
@@ -115,6 +115,10 @@ RAGEN 的核查范围为[原论文 v1，§2.2.2–§2.2.3](https://arxiv.org/htm
 默认 `enable_response_mask: True` 时，原版代码对 assistant 轮的生成 token 计算策略损失，包含思考和动作，环境观察仍作上下文；关闭该选项会改变此边界。[原版配置](https://github.com/mll-lab-nu/RAGEN/blob/b93b1a29772fe09f97981fedfdcce958ea8ddeef/config/base.yaml#L11) · [mask 实现](https://github.com/mll-lab-nu/RAGEN/blob/b93b1a29772fe09f97981fedfdcce958ea8ddeef/ragen/llm_agent/ctx_manager.py#L35-L71) · [训练器接入](https://github.com/mll-lab-nu/RAGEN/blob/b93b1a29772fe09f97981fedfdcce958ea8ddeef/ragen/trainer/agent_trainer.py#L555-L556)。纳入策略损失不表示每句思考有真值标签或正确性奖励；原论文 §4.4 还报告思考退化及与环境状态不符的文本，不能把格式合规或任务成功当作思考可靠性的充分证据。
 
 这次核查澄清了 API 开关与可训练文本的区别，未选定本项目的训练表示或更新算法。RAGEN 的联合轨迹训练也不直接证明固定 Executor、只优化 Planner 的收益。两阶段单任务实机虽请求 `reasoning_effort: none`，返回用量仍报告非零 `reasoning_tokens`；是否确实关闭推理尚未核实。开启内置推理后的完整保存与工具调用回传也尚未验收，不能把 API 另返回的推理字段自动当成本项目已有训练数据。若后续研究该机制，需先明确哪些生成 token 进入上下文、记录和损失，再确定对照与预算。[实机设置与原始用量](experiments/planner-centered/README.md#两阶段运行协议)
+
+本轮按安装版 Magpie `0.1.4657` 核对官方实现，并改用 `http://127.0.0.1:3425/v1/magpie/native/tongji/v1`。native 路由把请求路径接到配置的上游 host，因此这里保留 `/v1`；正文模型名用上游裸名称，避免普通网关的模型重写。普通本机 Bearer `magpie` 即可，通用客户端无需专用分支。[官方连接说明](https://github.com/yetone/magpie/blob/v0.1.4657/docs/reference.md#connecting-anything-else) · [原生转发实现](https://github.com/yetone/magpie/blob/v0.1.4657/internal/gateway/native.go#L359)
+
+源码显示该路径转发原始 body，但匹配隐私遮蔽规则时仍可能解析并改写 JSON。本轮没有更改 Magpie 全局配置，也没有调用模型；因此不能断言逐字节透传或旧推理用量异常已解决。模型适配器已保存响应中实际出现的 `reasoning`／`reasoning_content`，其是否存在和真实语义仍需目标接口验证。
 
 ## 四框架接口与评分口径
 
@@ -194,7 +198,7 @@ PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划
 
 ### Function Tool 的定义与执行绑定
 
-当前工作区使用 `two-phase-v2`。[单次运行状态 `FrameworkRun`](src/toolkit/frameworks/runtime.py) 复用执行会话，显式区分初始规划和后续循环。只有 PE-D 的 Executor 使用 `FunctionTool` 请求在线规划；Planner 通过普通 JSON 交付计划，PC 直接调用 Executor。`tools=[...]` 声明与 `invoke_tool()` 分发共用同一工具定义，不另建工具控制流程。旧 `two-phase-v1` 和 `native-tools-v1` 数据原样保留、可读和可导出，当前运行器不续跑这两个版本；旧四配置无协议记录仍保留显式 legacy 路径。[工具绑定](src/toolkit/frameworks/tools.py) · [框架入口](src/toolkit/README.md#四种运行框架) · [请求适配](src/recipe/planner-centered/run.py)
+当前工作区使用 `two-phase-v3`。[单次运行状态 `FrameworkRun`](src/toolkit/frameworks/runtime.py) 复用执行会话，显式区分初始规划和后续循环。只有 PE-D 的 Executor 使用 `FunctionTool` 请求在线规划；Planner 通过普通 JSON 交付计划，PC 直接调用 Executor。`tools=[...]` 声明与 `invoke_tool()` 分发共用同一工具定义，不另建工具控制流程。旧数据和既有静态页面原样保留，当前代码只运行及读取 v3；旧控制器、字段回退和旧实验读取／评分回填已删除。重现历史需检出对应源码。[工具绑定](src/toolkit/frameworks/tools.py) · [框架入口](src/toolkit/README.md#四种运行框架) · [请求适配](src/recipe/planner-centered/run.py)
 
 研究者进一步明确了 PE-D 与 PC 的两阶段控制流：先生成初始规划，再进入持续执行与监测。两种框架在第二阶段采用不同的调用机制：PE-D 的 Executor 按需通过原生工具调用请求规划；PC 每个非终局轮固定调用 Executor 一次，不需要模型工具调用。
 
@@ -228,28 +232,30 @@ PC 每个非终局轮必须执行一次 Executor，任务终止与成败依据�
 
 ### 实机轨迹审阅：上下文与输出格式
 
-研究者已检查 `two-phase-magpie-dev2-campus` 的 v1 实际输出，并授权以下 v2 修改。表中保留 v1 的问题来源，避免用新输入解释旧评分。v2 本轮不调用模型；六组旧任务完成不表示新输入或输出格式已实机验收。
+下表保留从 v1 实机审阅到 v2 输入修订的问题来源。当前 v3 在这些修改上新增 `assessment` 命名和可配置输入窗口，删除全部旧实验兼容。旧任务完成不表示当前版本已实机验收。
 
 | 项目 | v1 审阅事实 | v2 处理或未决项 |
 | --- | --- | --- |
-| Hard constraints | Recipe 固定传入「仅通过 ALFWorld 文本环境行动」，并非从任务提取。执行接口本身已限定环境。 | 研究者已决定删除独立字段、接口参数及注入块，不再另行抽取或复制任务约束。任务原文的价格、规格等要求保留；历史轨迹与历史回放仍按原样读取。 |
+| Hard constraints | Recipe 固定传入「仅通过 ALFWorld 文本环境行动」，并非从任务提取。执行接口本身已限定环境。 | 研究者已决定删除独立字段、接口参数及注入块，不再另行抽取或复制任务约束。任务原文的价格、规格等要求保留；历史轨迹保留，当前代码不再读取旧格式。 |
 | Observation 编号 | 直接使用共享日志的 `event_id`，模型调用与规划事件也占号。PC-F 的观察为 1、6、13、20、25。 | 观察从 1 连续编号，日志事件另记编号；规划求助、本地格式拒绝和模型调用不占观察号。`evidence_refs` 与报告链接按独立观察号处理。 |
 | 初始观察中的任务 | ALFWorld reset 返回包含场景和 `Your task is to`；适配器保留该任务行，框架又单独加入 `Task goal`。 | 框架初始观察只返回场景，任务目标独立提供；原始 task、canonical 校验及普通 rollout 完整任务输入保留。 |
 | Recent interactions | 当前阶段内最多两个已派发动作，包含最新动作；阶段字典变化即清空窗口。 | 移除该窗口与独立块，恢复完整交互历史，不因换阶段清空。 |
 | Earlier public evidence | 按引用、出窗项与初始观察摘录，动作和观察分别截为 120／360 字符，总上限 1,800 字符。 | 移除引用筛选与字符截断。这只是回放和裁剪，没有自动压缩；研究者明确不保留该机制。完整 Executor 回复、动作、环境反馈与工具往返保留。 |
 | PE-S Planner 提示 | PE-S 与 PE-D 共用模板，混入后续求助说明。 | 区分 PE-S 一次性规划与 PE-D 初始、后续求助；原生工具说明保持原样。 |
-| JSON 与 thinking_summary | 普通响应要求 JSON，`thinking_summary` 必填，是实现契约。 | 暂不改解析。研究者提出将公开判断放在 `<think>`，计划的 JSON 候选放在 `<plan>`；最终表示仍待讨论，不能由服务端推理开关直接决定。 |
+| JSON 与 thinking_summary | 普通响应要求 JSON，`thinking_summary` 必填，是实现契约。 | 当前字段改为 `assessment`，计划内部保留 JSON。研究者提出以 `<think>` 和 `<plan>` 划分文本，最终标签表示仍待讨论。 |
 | Verified phases | 整段当轮 `thinking_summary` 被归档并回放，已完成阶段夹带未来工作。 | 模型输入只保留阶段目标、完成条件与证据引用，原始判断留日志。`verified` 是 Planner 判断；单独的语义 verifier 曾讨论但尚未引入。 |
 
 上下文与编号实现见[运行实现](src/toolkit/frameworks/runtime.py)，格式约定见 [Planner 模板](src/toolkit/prompts/frameworks.py)。标签可以划分公开判断、规划和动作，但不等同于服务端单独返回的推理内容；本批请求 `reasoning_effort: none` 后用量仍报告非零推理 token，不能据请求值断言实际已关闭。PE-D 求助继续是原生 `tool_calls`，不因普通文本格式选择而改为伪工具命令。
 
-上下文容量管理与自动压缩分开讨论。研究者提出把 Recipe 的独立请求体字节上限统一到 Toolkit，并维护上下文窗口；当前仍是待设计方案。v2 恢复完整历史，现有请求体预算继续显式报超限，不做静默裁剪。服务端模型的标称 token 容量、本地字节阈值与摘要后的信息损失是不同条件，不能把移动预算检查视为已实现压缩。本轮不新增压缩器或以摘要改变执行证据。
+上下文容量管理与自动压缩分开。当前 Toolkit 提供 `context_window.max_input_tokens`，默认 `null`，研究者明确先不设数值。单次 prompt 正文嵌入按时间排列的完整交互；配置上限后，按角色持续淘汰最早的完整单元，不因固定前缀缩短重新补回已淘汰项，必要引用可明确保护。当前任务、计划或阶段、当前观察和正在交接的原生工具消息保留；这些内容本身放不下时记录窗口错误，不发送请求。没有模型摘要，完整原始日志不变。
+
+默认计数是保守的 UTF-8 字节估计，接口允许注入模型 tokenizer；二者不是同一种精度。每请求记录计数方法、保留与淘汰记录、估计输入与服务端返回用量。历史请求的输入重复出现，不能把各次 `total_tokens` 相加作为当前窗口大小。Recipe 的独立字节拒绝已移除。
 
 对照核查了原版 verl-agent 固定提交 `796ed310287fa605c9292a0fce07a86d79fde05e`：默认 `history_length=2`，`SimpleMemory.fetch()` 取最后 K 个完整观察／动作记录，不按字符摘录或生成摘要。ALFWorld 保存的是行动前观察与该动作，新返回的当前观察另列；所以 K=2 表示两个过去观察／动作对再加当前观察。内存保留先前记录，输入只选最近 K 条，只在环境 reset 清空，未按子计划清空。核查依据为本地固定提交源码，对应官方链接：[配置](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/verl/trainer/config/ppo_trainer.yaml#L292-L297) · [memory](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/agent_system/memory/memory.py#L81-L100) · [ALFWorld 存储与构造](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/agent_system/environments/env_manager.py#L147-L208)。本轮远端读取遇连接错误，未声称核验了上游最新版本。
 
 同版本 WebShop 另有带历史完整提示超过 13,000 字符后，当轮切换无历史模板的规则；这不属于 ALFWorld，也不是摘要压缩。[WebShop 源码](https://github.com/langfengQ/verl-agent/blob/796ed310287fa605c9292a0fce07a86d79fde05e/agent_system/environments/env_manager.py#L464-L502)。本地 `verl-agent-system` 修改版固定提交 `d9ba39f88fcd327afca1a9eb701f2a362666842f` 的 ALFWorld 沿用上述窗口，Executor 将格式化观察与 metaplan 拼成一条 user 消息；它与原版分别核查，不能拼成同一个实现结论。本项目 v2 按研究者本轮决定使用完整历史，没有照搬 K=2 窗口或 WebShop 的无历史降级规则。
 
-真实任务要求的一个本地例子是[WebShop 后端检查所用任务](src/toolkit/tests/test_live_backends.py)：要求双频、四核的播放器，价格低于 340 美元。价格上限与功能要求已经在任务原文里；研究者据此决定不保留独立 Hard constraints。运行器、四后端 Recipe 和新清单已移除该字段；旧 WebShop 回放仅为重建历史输入读取旧字段，不向新任务注入。
+真实任务要求的一个本地例子是[WebShop 后端检查所用任务](src/toolkit/tests/test_live_backends.py)：要求双频、四核的播放器，价格低于 340 美元。价格上限与功能要求已经在任务原文里；研究者据此决定不保留独立 Hard constraints。运行器、四后端 Recipe 和新清单已移除该字段；旧 WebShop 回放代码已删除，历史产物保留。
 
 PE-D-S 的观察须准确表述为「可一步完成整任务时，Executor 直接行动」，而非「提前看到环境的任务完成标志」。[原始轨迹](experiments/planner-centered/runs/two-phase-magpie-dev2-campus/trials/m5-t2-pe-d-s.json)中，事件 22 只返回沙发场景与当前动作列表，事件 23 是普通单步反馈；事件 24 的公开说明认为放置即可完成任务，随后实际放置。终局反馈到事件 25、26 才出现。原目标持续可见、动作菜单列出了可直接放置的命令、通用执行提示要求完成整任务，都可能影响该选择，单条轨迹不能分离原因。研究者接受本次自主完成的结果形式，并明确保持工具说明原样；记录该现象及理由，不将其视为必须补齐求助的失败，也不扩大为其他情形均无需求助的结论。
 

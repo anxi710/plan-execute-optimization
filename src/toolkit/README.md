@@ -39,7 +39,7 @@ Executor 不维护手写动作目录。ALFWorld 的候选缓存方式参考 verl
 | WebShop | 当前页面的 `get_available_actions()`；搜索关键词仍是开放参数。 |
 | Terminal-Bench | 实际 shell 执行与 `finish` 接口，没有有限可枚举的候选目录。 |
 
-同一后端的四种框架使用相同的动作信息。候选表示当前允许的操作，不保证推进任务或成功；不读取 expert plan、gold path 或隐藏评分。这次提示协议已改变，已有实验结果和原始 prompt 保持原样，没有按新协议重跑。
+同一后端的四类架构、六种配置使用相同的动作信息。候选表示当前允许的操作，不保证推进任务或成功；不读取 expert plan、gold path 或隐藏评分。历史实验结果和原始 prompt 保持原样，不按当前协议重跑或改写。
 
 ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助，不能等同于只给命令语法。框架对照的结论须限定在这一输入接口下；它是否仅减少接口错误、是否补偿计划遗漏，以及向无菜单接口的适用性尚未验证。[研究判断与候选对照](../../DISCUSSION.md#参数实例化状态筛选与-planner-评价)
 
@@ -59,7 +59,7 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 
 | 目录 | 职责 |
 | --- | --- |
-| `models/` | `BaseModel` 定义调用和计量接口。`AsyncChatClient` 支持限并发的 OpenAI 兼容请求，`MeteredChatModel` 复用该客户端并计量用量。模型类接收调用方解析后的配置，不绑定 Planner 或 Executor；角色标签由执行层记录。 |
+| `models/` | `BaseModel` 定义调用和计量接口。`AsyncChatClient` 支持限并发的 OpenAI 兼容请求，`MeteredChatModel` 复用该客户端并计量用量。`ContextWindow` 按输入预算维护完整交互单元的窗口。模型类接收调用方解析后的配置，不绑定 Planner 或 Executor；角色标签由执行层记录。 |
 | `tasks/` | 按任务 ID、划分和分片选择任务，校验计划与任务的对应关系。ALFWorld 支持生成 `task_id → gamefile` 映射，SciWorld 按子任务与 variation 加载。 |
 | `envs/` | `BaseEnv` 管理环境状态、动作轨迹和步数。ALFWorld、SciWorld 和 WebShop 适配器处理初态、动作反馈和 benchmark 的终局判定。 |
 | `prompts/` | 按环境组织 Planner 和 Executor 模板，集中管理框架提示、渲染、计划注入和输出解析。 |
@@ -72,7 +72,7 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 
 `toolkit.frameworks.run_framework()` 通过 `mode` 选择控制流。四种架构族有六种运行配置，公用环境、调用与事件记录组件。
 
-当前协议为 `two-phase-v2`。除 EO 外，各组先直接调用 Planner 生成初始规划，再进入执行与监测；第一阶段不执行环境动作。[定义与验收边界](../../DISCUSSION.md#function-tool-的定义与执行绑定)
+当前运行器只支持 `two-phase-v3`。除 EO 外，各组先直接调用 Planner 生成初始规划，再进入执行与监测；第一阶段不执行环境动作。[定义与验收边界](../../DISCUSSION.md#function-tool-的定义与执行绑定)
 
 | 模式 | 谁控制任务 | 何时调用 Planner |
 | --- | --- | --- |
@@ -81,19 +81,37 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 | `pe-d-f` / `pe-d-s` | Executor | 首步前直接取计划，后续由 Executor 按需发起 `request_plan`；分别取得整体计划或子计划。 |
 | `pc-f` / `pc-s` | Planner | 初始规划后固定执行一步；环境未终止时再监测、维持或更新规划。F 持有整体规划与当前编号，S 维护当前阶段。双方不注册执行工具。 |
 
-[`FrameworkRun`](frameworks/runtime.py) 保存单次运行的状态并显式推进两阶段流程，复用 `RolloutSession`；公开常量为 `FRAMEWORK_PROTOCOL`、`FRAMEWORK_MODES` 与 `PLAN_SCOPES`。模型回调返回含 `text`、结束原因和用量的字典，仅 PE-D 的 Executor 请求带 `tools` 并可返回原生 `tool_calls`。EO 的 `planner` 可设为 `None`。运行器按适配器实际派发的环境步计 `executor_limit`。完整交互历史跨阶段保留，不再使用最近两轮窗口、按引用摘录或 1,800 字符裁剪。Executor 保留原始回复与原生工具往返，Planner 读取完整公开动作、Executor 声明与环境反馈；候选菜单仅向 Executor 提供当前列表。事件元数据和剩余额度只在运行记录中保存。
+[`FrameworkRun`](frameworks/runtime.py) 保存单次运行的状态并显式推进两阶段流程，复用 `RolloutSession`；公开常量为 `FRAMEWORK_PROTOCOL`、`FRAMEWORK_MODES` 与 `PLAN_SCOPES`。模型回调返回含 `text`、结束原因和用量的字典，仅 PE-D 的 Executor 请求带 `tools` 并可返回原生 `tool_calls`。EO 的 `planner` 可设为 `None`。运行器按适配器实际派发的环境步计 `executor_limit`，不再设置独立 Planner 调用额度或固定返回间隔。完整交互日志跨阶段保留，模型输入按下文的上下文窗口选择。Planner 读取公开动作、Executor 声明与环境反馈；候选菜单仅向 Executor 提供当前列表。事件元数据和剩余额度只在运行记录中保存。
 
 初始观察编号为 1，后续环境反馈依次为 2、3……；模型调用、规划求助和本地格式错误不占观察号。事件日志另存 `event_id`，观察事件持久保存 `observation_id`，`evidence_refs` 引用观察号。ALFWorld 的框架初始观察只含场景，任务目标独立提供；原始任务文本及普通 rollout 的任务输入保留。PE-S 的 Planner 模板只说明一次初始规划，PE-D 区分初始规划与后续求助。已完成阶段的模型输入只保留阶段、完成条件和证据引用，原始判断保存在日志中；`verified` 是 Planner 判断，尚未引入独立阶段 verifier。
 
-PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测则返回一个普通 JSON 对象：`thinking_summary` 陈述公开依据，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
+PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。只读终局复核使用以 `Assessment:` 开头的普通文本。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
 
-任务要求只由任务原文提供，不再维护或注入独立 `constraints`／`hard_constraints` 字段；`run_framework()` 也不再接受该参数。历史记录中的旧字段保持可读，不按新结构改写。
+任务要求只由任务原文提供，不维护或注入独立 `constraints`／`hard_constraints` 字段；`run_framework()` 不接受该参数。
 
 PC 每个非终局轮必须调用一次 Executor，随后根据环境反馈继续或停止。Planner 只维护规划与阶段判断，不能自行宣告任务结束。开放任务由 Executor 通过环境的提交动作交付，再由独立 verifier 验收；在线记录保留待验状态。终局或额度用尽后至多一次只读收尾，不能再派发动作或改写环境裁决。`deliver_plan`、`execute_step` 与 `submit_task` 不再作为模型工具。
 
 环境、模型客户端、预算和日志由运行会话持有，不进入模型工具参数。当前动作模板和环境填好名称、按状态筛选的候选列表保持不变，辅助性质及评价限制仍须说明。
 
-旧 `two-phase-v1` 与 `native-tools-v1` 六配置记录保持可读和可导出，但不能用当前运行器续跑；重现需使用当时源码。更早的四配置无协议记录仍由 Recipe 的 `--legacy` 路径执行。完整历史不等于无限输入，调用方现有请求字节预算仍会显式拒绝超限请求，不会静默摘要或截断；统一 Toolkit 上下文预算与压缩策略尚待设计。调用方装配模型、环境、输出路径与调度，并在外部验收后补写独立分数。[Recipe 入口](../recipe/planner-centered/README.md) · [实施方案和验收项](../../experiments/planner-centered/protocol-design.md#两阶段协议验收)
+历史实验数据保留归档。当前代码不提供旧协议、旧字段或旧轨迹布局的读取、续跑与导出兼容；读取或复现历史实验须检出对应源码版本。调用方装配模型、环境、输出路径与调度，并在外部验收后补写独立分数。[Recipe 入口](../recipe/planner-centered/README.md) · [新实验协议与验收边界](../../experiments/planner-centered-v2/README.md#六配置的运行协议)
+
+## 输入上下文窗口
+
+[`ContextWindow`](models/context.py) 由 Toolkit 维护，Recipe 只传实验配置。`toolkit/config.yaml` 中的 `context_window.max_input_tokens` 默认为 `null`，暂不设置容量。显式设置正整数时，它约束单次请求的输入预算；各角色的输出 `max_tokens` 另行设置，两者不冒充模型原生总上下文容量。
+
+```python
+await run_framework(
+    # mode、环境、模型和保存回调等装配参数
+    context_window={"max_input_tokens": None},
+    **runner_options,
+)
+```
+
+Planner 和 Executor 分别维护自己的窗口，权限保持不变。每次请求把保留的完整交互单元写进一个 `user` prompt，淘汰最早的完整单元，不截断单条回复或观察。已淘汰的单元不会因后续固定 prompt 变短而自动返回；Executor 明确引用的证据可临时重新提供给 Planner。PE-D 只把当前必要的原生 `assistant` 工具调用和匹配的 `tool` 结果保留为独立消息，旧工具往返写入 prompt 正文。
+
+任务目标、当前计划或阶段、当前观察、Executor 的当前动作菜单和当前原生工具交接不会被裁掉。窗口同时计入这些固定内容和工具声明。固定内容仍超限时，运行器在派发请求前记录 `context_window_error` 并保留缺评；PC 只读终局复核失败不改写已经取得的环境裁决。原始事件、完整请求与回复持续保存在日志，不做自动摘要。
+
+调用方可注入 `count_tokens(payload)`。未注入时，默认使用明确标注的 UTF-8 字节保守估计，不声称具有跨 provider 的精确 tokenizer。`model_call.context_window` 保存估算方法、估算输入量、保留／淘汰的交互与观察编号、受保护的交互编号，以及响应中实际报告的输入和输出 token。实际 `prompt_tokens` 只反馈请求中未计入的额外开销，不累加历次请求的 `total_tokens` 作为窗口占用。淘汰范围与完整原始轨迹可以分别核查。
 
 ## 执行与采样的组合
 
@@ -104,7 +122,7 @@ PC 每个非终局轮必须调用一次 Executor，随后根据环境反馈继�
 | 批量采样 | [`sample_jobs()`](rollout/batch.py) 负责并发和结果顺序。调用方的 `open_worker` 异步上下文提供单样本执行函数，并管理模型和环境资源。 |
 | 记录输出 | [`rollout/log.py`](rollout/log.py) 处理事件和状态记录。保存回调决定落盘方式，执行会话不依赖文件路径或某一种磁盘格式。 |
 
-`RolloutRunner.run(row, plan, save)` 接收外部生成的固定计划，组合上述执行会话完成 PE-S 的执行采样；同一计划可独立采样多次。`plan=None` 时执行无计划采样。`run_framework()` 在共享执行能力上组合四种框架的控制策略。原有状态轨迹与四框架事件轨迹沿用各自的保存和读取接口。
+`RolloutRunner.run(row, plan, save)` 接收外部生成的固定计划，组合上述执行会话完成 PE-S 的执行采样；同一计划可独立采样多次。`plan=None` 时执行无计划采样。`run_framework()` 在共享执行能力上组合四类架构的六种配置。普通 rollout 的状态轨迹与框架的事件轨迹使用各自的保存和读取接口。
 
 自行组合控制逻辑时，提供环境、异步模型回调和返回边界函数：
 
@@ -127,7 +145,7 @@ await session.run(after_step=controller)
 - `tasks.rows.load_task_rows()` 可选择 canonical 任务并绑定计划文件。`tasks.alfworld.prepare_gamefile_map()` 从本地环境生成映射。并发执行时，每条 ALFWorld 轨迹用已确认的游戏文件重新初始化。
 - `toolkit.planning.generation.generate_plans()` 接收任务行或任务 JSONL，用指定 benchmark 的统一模板为每个任务生成一份计划。输出记录回复、用量和实际设置，续跑时跳过已经保存且通过校验的任务。
 - `rollout.batch.run_rollouts()` 为固定计划采样装配任务、模型、环境和状态日志，再调用共享的 `sample_jobs()`。Recipe 提供每条样本的 seed 和结果路径，决定是否续跑。`load_saved_rollout()` 校验记录属于哪条样本，显式重试时调用 `archive_incomplete_rollout()` 保留中断轨迹。
-- `rollout.traces.load_trace()` 读取已完成轨迹，`load_records()` 可按任务、样本和成功状态筛选，`conversation_parts()` 核对每条环境反馈与消息记录。
+- `rollout.traces.load_trace()` 校验一份已完成的普通 rollout 轨迹；`load_records()` 只读取 `<task_id>/sample_<id>.json`，按任务、样本和成功状态筛选；`conversation_parts()` 核对每条环境反馈与消息记录。
 
 SciWorld 可用 `tasks.sciworld.SciWorldTask.load_tasks()` 和 `envs.sciworld_env.open_sciworld_backend()` 装配。默认使用安装包内的 JAR。历史环境如需指定自己的 JAR，显式传入 `jar_path`。
 
@@ -169,6 +187,27 @@ java -version
 ```
 
 编译工具用于安装 TextWorld 的源码依赖。两个后端可使用上文列出的本地数据。
+
+<details>
+<summary>TextWorld 1.7.0 平台标签与本机依赖修复</summary>
+
+本轮下载的官方 Linux 1.7.0 wheel 在 `WHEEL` 文件的 `Tag:` 前多了一行空行。pip 按头字段读取时得不到平台标签，因此 `pip check` 报 `textworld 1.7.0 is not supported on this platform`。实际 ALFWorld 重载与动作可运行。这是所检查 wheel 的元数据错误，不据此降级环境版本。[官方发布包](https://pypi.org/project/textworld/1.7.0/)
+
+[修复脚本](scripts/repair_textworld_wheel.py)只移动该标签到头部并由 `wheel` 重建 `RECORD`，逐文件确认代码与数据不变。需要 `wheel` 包，修复后再安装：
+
+```bash
+python -m pip download --no-deps --dest /tmp/textworld-wheel textworld==1.7.0
+python src/toolkit/scripts/repair_textworld_wheel.py \
+  /tmp/textworld-wheel/textworld-1.7.0-py3-none-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+  /tmp/textworld-wheel/fixed
+python -m pip install --no-index --no-deps --force-reinstall \
+  /tmp/textworld-wheel/fixed/textworld-1.7.0-py3-none-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+python -m pip check
+```
+
+本机 `plan-test` 另有已有 Hugging Face 包冲突：`transformers 5.17.0` 要求 `huggingface-hub>=1.5,<2`，`tokenizers 0.23.2` 要求 `<2`，原安装值是 `2.1.1`。本轮将 hub 调整为 `1.33.0`，保留其余两包，再通过导入检查与 `pip check`。这项本机修复不加入主 requirements；WebShop 的独立环境仍按其专用依赖安装，不混用两套 Hugging Face 版本。
+
+</details>
 
 #### WebShop 文本后端
 
