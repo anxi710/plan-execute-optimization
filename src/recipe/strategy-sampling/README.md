@@ -29,7 +29,7 @@
 
 运行目录需包含 `tasks.jsonl`、`controls.jsonl` 和 `gamefiles.jsonl`。`planner.api_base`、`planner.api_key` 覆盖 Toolkit 的 Planner 连接默认值，`toolkit.executor` 覆盖 Executor 默认值。`api_key` 为空时，采样和执行待运行样本读取通用环境变量 `OPENAI_API_KEY`。本机网关可直接配置普通字符串 key；真实密钥留在环境变量或未跟踪的本地配置中。运行设置不保存 key。[Toolkit 依赖与离线检查](../../toolkit/README.md#使用与检查)
 
-两个角色统一使用 `thinking` 和 `reasoning_effort`。`thinking: disabled` 发送 `thinking: {type: disabled}`；`reasoning_effort: none` 发送同名请求字段。`null` 表示省略该字段，不能视为关闭内置思考。按所用接口选择字段：当前 [DeepSeek 直连](https://api-docs.deepseek.com/guides/thinking_mode/)配置保留 `thinking: disabled`，[同济接口](https://agi.tongji.edu.cn/docs/reasoning)使用 `reasoning_effort: none`。客户端不识别供应商或自动转换字段；旧运行记录中的 `deepseek_thinking` 仅在续跑比较时按等价名称处理，原文件不改写。
+两个角色统一使用 `thinking` 和 `reasoning_effort`。`thinking: disabled` 发送 `thinking: {type: disabled}`；`reasoning_effort: none` 发送同名请求字段。`null` 表示省略该字段，不能视为关闭内置思考。按所用接口选择字段：当前 [DeepSeek 直连](https://api-docs.deepseek.com/guides/thinking_mode/)配置保留 `thinking: disabled`，[同济接口](https://agi.tongji.edu.cn/docs/reasoning)使用 `reasoning_effort: none`。客户端不识别供应商或自动转换字段。续跑严格比较当前设置与运行记录，不转换旧字段或接受指令路径迁移；历史记录保留，复现须检出对应源码版本。
 
 从仓库根目录启动采样和盲审材料生成。`--samples` 可限制本次采样的槽位数；盲审仍要求达到 YAML 中设置的完整数量。
 

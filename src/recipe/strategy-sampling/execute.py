@@ -48,26 +48,6 @@ def load_queue(run_dir, data_dir, split):
     return plans
 
 
-def equivalent_instruction_path(saved, settings):
-    # Preserve saved prompt text as the evidence when its old file no longer exists.
-    if (not isinstance(saved, dict) or not isinstance(saved.get("environment"), dict)
-            or "instruction_path" not in saved["environment"]):
-        return False
-    executor = saved.get("executor")
-    if isinstance(executor, dict):
-        if "deepseek_thinking" in executor and "thinking" not in executor:
-            executor["thinking"] = executor.pop("deepseek_thinking")
-        if executor.get("reasoning_effort") is None:
-            executor.pop("reasoning_effort", None)
-    previous = saved["environment"].get("instruction_path")
-    current = settings["environment"]["instruction_path"]
-    if (previous != current and (previous is None or isinstance(previous, str))
-            and isinstance(saved.get("executor_instruction"), str)
-            and saved["executor_instruction"] == settings.get("executor_instruction")):
-        saved["environment"]["instruction_path"] = current
-    return saved == settings
-
-
 def rollout_job(plan_id, row, sample_id, path, *, seed):
     from toolkit.rollout.batch import RolloutJob
 
@@ -166,7 +146,7 @@ def main(argv=None):
             "executor_instruction": load_executor_instruction("alfworld", env_config["instruction_path"]),
             "split": split, "samples_per_plan": samples_per_plan, "plan_placement": placement,
             "concurrency": concurrency,
-        }, equivalent=equivalent_instruction_path)
+        })
         pending = []
         archived = []
         complete = incomplete = 0

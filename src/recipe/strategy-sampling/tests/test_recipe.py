@@ -4,7 +4,6 @@ import os
 import tempfile
 import unittest
 from contextlib import contextmanager
-from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -15,7 +14,6 @@ from toolkit.envs.alfworld_env import alfworld_settings
 from toolkit.rollout.state import State
 from toolkit.tasks import alfworld
 from toolkit.utils.files import read_jsonl, read_yaml_mapping, write_jsonl
-from toolkit.utils.runfiles import save_settings
 
 
 RECIPE_DIR = Path(__file__).resolve().parents[1]
@@ -30,48 +28,6 @@ def load_script(name):
 
 
 class StrategySamplingTest(unittest.IsolatedAsyncioTestCase):
-    def test_reasoning_rename_preserves_equivalent_saved_execution_settings(self):
-        experiment = load_script("execute")
-        settings = {"environment": {"instruction_path": None},
-                    "executor": {"model_name": "fake-model", "thinking": "disabled"}}
-        saved = deepcopy(settings)
-        saved["executor"]["deepseek_thinking"] = saved["executor"].pop("thinking")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "run_settings.meta"
-            save_settings(path, saved)
-            original = path.read_bytes()
-            save_settings(path, settings, equivalent=experiment.equivalent_instruction_path)
-            self.assertEqual(path.read_bytes(), original)
-            for override in ({"thinking": "enabled"}, {"reasoning_effort": "none"}):
-                with self.subTest(override=override):
-                    changed = deepcopy(settings)
-                    changed["executor"].update(override)
-                    with self.assertRaisesRegex(ValueError, "Resume settings differ"):
-                        save_settings(path, changed, equivalent=experiment.equivalent_instruction_path)
-
-    def test_instruction_relocation_requires_matching_text_and_other_settings(self):
-        experiment = load_script("execute")
-        settings = {"environment": {"instruction_path": None, "max_steps": 30},
-                    "executor_instruction": "Exact instruction.\n", "executor": {"model_name": "fake-model"}}
-        saved = deepcopy(settings)
-        saved["environment"]["instruction_path"] = "/removed/instructions/alfworld_inst.txt"
-        self.assertTrue(experiment.equivalent_instruction_path(saved, settings))
-        self.assertEqual(saved, settings)
-
-        for change in ("text", "max_steps", "missing_text", "missing_path"):
-            with self.subTest(change=change):
-                saved = deepcopy(settings)
-                saved["environment"]["instruction_path"] = "/removed/instructions/alfworld_inst.txt"
-                if change == "text":
-                    saved["executor_instruction"] = "Different instruction.\n"
-                elif change == "max_steps":
-                    saved["environment"]["max_steps"] = 29
-                elif change == "missing_text":
-                    del saved["executor_instruction"]
-                else:
-                    del saved["environment"]["instruction_path"]
-                self.assertFalse(experiment.equivalent_instruction_path(saved, settings))
-
     def test_only_condition_b_receives_its_earlier_routes(self):
         planner = load_script("sample")
 
@@ -303,3 +259,18 @@ class StrategySamplingTest(unittest.IsolatedAsyncioTestCase):
             with patch("builtins.print") as output:
                 load_script("analyze").main(["report", "--config", str(config_path)])
             output.assert_called_once_with("0/2 rollouts complete")
+            manifest = run / "executions/run_settings.meta"
+            current = manifest.read_text(encoding="utf-8")
+            for change in ("old_reasoning_name", "relocated_instruction"):
+                with self.subTest(change=change):
+                    saved = json.loads(current)
+                    if change == "old_reasoning_name":
+                        saved["executor"]["deepseek_thinking"] = saved["executor"].pop("thinking")
+                    else:
+                        saved["environment"]["instruction_path"] = "/old/instructions/alfworld.txt"
+                    manifest.write_text(json.dumps(saved), encoding="utf-8")
+                    original = manifest.read_bytes()
+                    with self.assertRaisesRegex(ValueError, "Resume settings differ"):
+                        experiment.main(["--config", str(config_path)])
+                    self.assertEqual(manifest.read_bytes(), original)
+                    manifest.write_text(current, encoding="utf-8")

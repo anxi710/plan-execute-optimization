@@ -19,12 +19,12 @@ def exclusive_run_lock(path):
         yield
 
 
-def save_settings(path, settings, *, equivalent=None):
+def save_settings(path, settings):
     """Record settings once and verify them before continuing an existing run."""
     path = Path(path)
     if not path.exists():
         write_json(path, settings)
         return
     saved = json.loads(path.read_text(encoding="utf-8"))
-    if saved != settings and (equivalent is None or not equivalent(saved, settings)):
+    if saved != settings:
         raise ValueError(f"Resume settings differ at {path}")
