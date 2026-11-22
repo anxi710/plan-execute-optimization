@@ -29,6 +29,12 @@ class AlfWorldEnv(BaseEnv):
             max_steps=max_steps,
         )
 
+    @property
+    def initial_observation(self):
+        """Return the scene for framework callers that supply the goal separately."""
+        task = re.search(r"(?:\r?\n)+Your task is to: [^\r\n]+(?:\r?\n)*\Z", self._initial_observation)
+        return self._initial_observation[:task.start()] if task else self._initial_observation
+
     def reset(self):
         if self.task.admissible_commands is None:
             raise ValueError("ALFWorld task has no native admissible commands from reset")
@@ -47,7 +53,7 @@ class AlfWorldEnv(BaseEnv):
         return f"put {put[1]} in/on {put[2]}" if put else action
 
     def execute_action(self, action: str) -> ActionResult:
-        observations, _, dones, info = self.task.env.step([action])
+        observations, _, dones, info = self.dispatch(self.task.env.step, [action])
         self.available = info["admissible_commands"][0].copy()
         observation = observations[0]
         if observation.startswith("You arrive at loc "):

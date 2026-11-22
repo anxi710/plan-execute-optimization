@@ -99,3 +99,24 @@ class RolloutIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final["terminate_reason"], "executor_cancelled")
         self.assertTrue(final["incomplete"])
         self.assertFalse(final["finished"])
+
+    async def test_tool_protocol_turn_reuses_a_tool_aware_response_and_records_dispatch_failure(self):
+        class FailingEnvironment(LocalEnvironment):
+            def execute_action(self, action):
+                def fail(_):
+                    raise TimeoutError
+
+                return self.dispatch(fail, action)
+
+        executor = AsyncMock(return_value={"text": "Action: inspect"})
+        session = RolloutSession(FailingEnvironment(), {"executor": executor}, count_dispatched=True)
+        session.reset()
+        messages = [{"role": "user", "content": "Fresh context"}]
+        call = await session.call("executor", messages, tool_choice="none")
+        with self.assertRaises(TimeoutError):
+            await session.step(call=call)
+        executor.assert_awaited_once_with(messages, tool_choice="none")
+        event = session.log.events[-1]
+        self.assertEqual(event["type"], "tool_error")
+        self.assertTrue(event["dispatched"])
+        self.assertTrue(event["result_unknown"])

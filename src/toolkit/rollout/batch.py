@@ -108,7 +108,9 @@ async def run_rollouts(jobs, *, open_slot, create_agent, environment_factory, pl
                     runner = RolloutRunner(slot.load_task, agent, environment_factory,
                                            plan_placement=plan_placement)
                 agent.reset_usage()
-                log = JsonRolloutLog(job.path, job.identity, usage_metadata=agent.usage_metadata)
+                log = JsonRolloutLog(job.path, job.identity, usage_metadata=lambda: {
+                    f"executor_{key}": value for key, value in agent.usage_metadata().items()
+                })
                 return await runner.run(job.row, job.plan, log.save)
 
             try:

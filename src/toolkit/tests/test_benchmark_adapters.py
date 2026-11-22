@@ -6,6 +6,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
+from toolkit.envs.alfworld_env import AlfWorldEnv, alfworld_settings
 from toolkit.envs.sciworld_env import SciWorldEnv, open_sciworld_backend, sciworld_settings
 from toolkit.envs.webshop_env import WebShopEnv, webshop_settings
 from toolkit.tasks import alfworld
@@ -37,6 +38,25 @@ class BenchmarkAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Conflicting ALFWorld gamefiles"):
             alfworld.load_alfworld_rows(self.path, "dev", gamefile_map_path=gamefile_map,
                                         selection_rows=[dict(tasks[0], gamefile="different")])
+
+    def test_alfworld_framework_observation_separates_the_native_task_suffix(self):
+        scene = "You are in the middle of a room. You see a coffeetable 1 and a sofa 1."
+        goal = "Your task is to: put some remotecontrol on sofa."
+        for separator, ending in (("\n", ""), ("\n\n", "\n"), ("\r\n", "\r\n")):
+            with self.subTest(separator=separator, ending=ending):
+                original = f"{scene}{separator}{goal}{ending}"
+                task = alfworld.AlfWorldTask(2, None, original, "game", admissible_commands=["look"])
+                env = AlfWorldEnv(task, **alfworld_settings())
+                prompt, state = env.reset()
+                self.assertEqual(env.initial_observation, scene)
+                self.assertEqual(task.observation, original)
+                self.assertIn(original, prompt)
+                self.assertEqual(prompt.count(goal), 1)
+                self.assertEqual(state.history[0]["content"], prompt)
+
+        unchanged = f"{scene}\n{goal}\nAdditional environment feedback."
+        task = alfworld.AlfWorldTask(2, None, unchanged, "game", admissible_commands=["look"])
+        self.assertEqual(AlfWorldEnv(task, **alfworld_settings()).initial_observation, unchanged)
 
     def test_alfworld_scan_preserves_ambiguity_and_closes_backend(self):
         gamefiles = [str(self.path / f"game-{index}") for index in range(3)]
@@ -135,18 +155,22 @@ class BenchmarkAdapterTest(unittest.TestCase):
         ]
         game.step.side_effect = [("item page", 0.0, False, None), ("done", 0.75, True, None)]
         env = WebShopEnv(task, game, **webshop_settings())
+        env.count_dispatched = True
         prompt, _ = env.reset()
         game.reset.assert_called_once_with(session=7)
         self.assertIn("search[keywords]", prompt)
         _, state = env.step("Action: click[Buy Now]")
         self.assertFalse(state.action_trace[-1]["valid"])
+        self.assertFalse(state.action_trace[-1]["dispatched"])
         _, state = env.step("Action: search[<a> blue]")
         self.assertFalse(state.action_trace[-1]["valid"])
         game.step.assert_not_called()
+        self.assertEqual(state.steps, 0)
         feedback, _ = env.step("Action: search[blue bag]")
         self.assertIn("click[buy now]", feedback)
         _, state = env.step("Action: click[Buy Now]")
         self.assertEqual(game.step.call_count, 2)
+        self.assertEqual(state.steps, 2)
         self.assertTrue(state.finished)
         self.assertFalse(state.success)
         self.assertEqual(state.reward, 0.75)

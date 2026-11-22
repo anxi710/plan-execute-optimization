@@ -6,8 +6,10 @@ task_id: null
 planner:
   model: deepseek-flash
   api_base: https://api.deepseek.com
+  api_key: null
   temperature: 0.8
   thinking: disabled
+  reasoning_effort: null
   token_parameter: max_tokens
   max_output_tokens: 320
   samples_per_condition: 8
@@ -36,6 +38,7 @@ toolkit:
     max_completion_tokens: 256
     token_parameter: max_tokens
     request_max_retries: 0
-    deepseek_thinking: disabled
+    thinking: disabled
+    reasoning_effort: null
   environments:
     alfworld: {}

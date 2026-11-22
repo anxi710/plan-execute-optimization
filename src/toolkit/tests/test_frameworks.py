@@ -81,12 +81,13 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
         snapshots = []
         record = await run_framework(
             mode=mode, env=env, planner=planner, executor=executor,
-            goal="Put the object on the shelf.", constraints=["Use the household action interface."],
+            goal="Put the object on the shelf.",
             workspace_id=f"test-{mode}", save=lambda value: snapshots.append(json.loads(json.dumps(value))),
             **{"executor_limit": 8, "planner_limit": 6, "return_every": 1, **limits},
         )
         self.assertEqual(snapshots[-1], record)
         self.assertEqual(env.resets, 1)
+        self.assertNotIn("constraints", record)
         return record, env, planner, executor
 
     async def test_control_boundaries_and_continuing_workspace(self):
@@ -150,7 +151,7 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(e["stage_objective"] is None for e in requests))
                 for request in requests:
                     self.assertEqual(request["goal"], record["goal"])
-                    self.assertEqual(request["hard_constraints"], record["constraints"])
+                    self.assertNotIn("hard_constraints", request)
         self.assertTrue(all(prompt == base_prompts[0] for prompt in base_prompts))
 
     async def test_internal_limits_do_not_change_initial_model_inputs(self):
@@ -192,7 +193,7 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
             mode="pc", env=CandidateHousehold(),
             planner=AsyncMock(side_effect=[decision("delegate", 1), decision("delegate", 2), decision("finish", 3)]),
             executor=AsyncMock(side_effect=[reply("Action: take object"), reply("Action: put object on shelf")]),
-            goal="Put the object on the shelf.", constraints=[], workspace_id="native-actions",
+            goal="Put the object on the shelf.", workspace_id="native-actions",
             executor_limit=4, planner_limit=3, return_every=1, save=lambda _: None,
         )
         self.assertTrue(record["outcome"]["success"])
@@ -225,7 +226,7 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
                     mode=mode, env=Household(), planner=AsyncMock(side_effect=plans),
                     executor=AsyncMock(side_effect=[reply("Thought: Inspect locally.\nAction: inspect box"),
                                                    reply("Action: take object"), reply("Action: put object on shelf")]),
-                    goal="Put the object on the shelf.", constraints=["Use the household action interface."],
+                    goal="Put the object on the shelf.",
                     workspace_id="PRIVATE_WORKSPACE_SENTINEL", executor_limit=8, planner_limit=6, return_every=1,
                     save=lambda _: None, benchmark="alfworld", external_verifier=False,
                 )
@@ -318,7 +319,7 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
 
         trial = asyncio.create_task(run_framework(
             mode="eo", env=Household(), planner=None, executor=executor,
-            goal="Put the object on the shelf.", constraints=[], workspace_id="test-cancel",
+            goal="Put the object on the shelf.", workspace_id="test-cancel",
             save=lambda value: snapshots.append(json.loads(json.dumps(value))),
             executor_limit=8, planner_limit=0, return_every=2,
         ))
@@ -342,7 +343,7 @@ class FrameworkTests(unittest.IsolatedAsyncioTestCase):
         env = AsyncHousehold()
         record = await run_framework(
             mode="eo", env=env, planner=None, executor=AsyncMock(return_value=reply("Action: finish")),
-            goal="Example task", constraints=[], workspace_id="test-external", executor_limit=2,
+            goal="Example task", workspace_id="test-external", executor_limit=2,
             planner_limit=0, return_every=1, save=lambda _: None, benchmark="terminalbench", external_verifier=True,
         )
         self.assertEqual(env.actions, ["finish"])

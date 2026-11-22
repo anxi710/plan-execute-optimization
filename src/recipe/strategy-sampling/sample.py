@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from toolkit.agents.openai_agent import AsyncChatClient
+from toolkit.models.openai import AsyncChatClient
 from toolkit.envs.alfworld_env import alfworld_settings
 from toolkit.utils.config import resolve_config
 from toolkit.utils.files import read_jsonl, read_yaml_mapping, write_jsonl
@@ -62,8 +62,10 @@ def parse_strategy_reply(content):
 
 
 async def sample(run_dir, tasks, settings, *, samples):
-    api_key = os.environ["DEEPSEEK_API_KEY"]
-    save_settings(run_dir / "planner_settings.json", settings)
+    api_key = settings.get("api_key") or os.environ["OPENAI_API_KEY"]
+    save_settings(run_dir / "planner_settings.json", {name: value for name, value in settings.items()
+                                                    if name != "api_key"
+                                                    and (name != "reasoning_effort" or value is not None)})
     results_dir = run_dir / "plans"
     results_dir.mkdir(exist_ok=True)
 
@@ -113,6 +115,8 @@ async def sample(run_dir, tasks, settings, *, samples):
             options["temperature"] = settings["temperature"]
         if settings["thinking"] is not None:
             options["extra_body"] = {"thinking": {"type": settings["thinking"]}}
+        if settings.get("reasoning_effort") is not None:
+            options["reasoning_effort"] = settings["reasoning_effort"]
         outcomes = await asyncio.gather(*(one_task(task) for task in tasks), return_exceptions=True)
         failures = [
             f"Task {task['id']}: {type(result).__name__}, HTTP {getattr(result, 'status_code', '-')}"
@@ -137,9 +141,11 @@ def main(argv=None):
     if not run_dir:
         parser.error("Set run_dir in the recipe config or pass --run-dir")
     run_dir = Path(run_dir)
-    overrides = recipe.get("toolkit", {}).get("environments", {})
-    env_config = alfworld_settings(resolve_config({"environments": overrides}))
-    settings = {**recipe["planner"], "executor_max_steps": env_config["max_steps"]}
+    config = resolve_config(recipe.get("toolkit", {}))
+    env_config = alfworld_settings(config)
+    settings = {**{name: config["planner_generation"][name]
+                   for name in ("api_base", "api_key", "thinking", "reasoning_effort")},
+                **recipe["planner"], "executor_max_steps": env_config["max_steps"]}
     if args.model is not None:
         settings["model"] = args.model
     if args.concurrency is not None:
@@ -150,8 +156,6 @@ def main(argv=None):
     ):
         if type(settings[name]) is not int or settings[name] < minimum:
             parser.error(f"{name} must be an integer of at least {minimum}")
-    if "api_key" in settings:
-        parser.error("Set the API key through DEEPSEEK_API_KEY, not YAML")
     if settings["token_parameter"] not in ("max_tokens", "max_completion_tokens"):
         parser.error("Unsupported Planner token_parameter")
     samples = settings["samples_per_condition"] if args.samples is None else args.samples

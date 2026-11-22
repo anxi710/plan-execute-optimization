@@ -27,6 +27,13 @@ MODES = {
     "pe-d": ("PE-D", "按边界更新剩余整体规划，续接同一整项请求"),
     "pc": ("PC", "更新整体规划并委派新的有界阶段"),
 }
+MODE_DETAILS = {
+    **MODES,
+    "pe-d-f": ("PE-D-F", "Executor 按需请求修订剩余整体规划"),
+    "pe-d-s": ("PE-D-S", "Executor 按需请求新的子计划"),
+    "pc-s": ("PC-S", "Planner 生成子计划，逐步监控并选择当前阶段"),
+    "pc-f": ("PC-F", "Planner 生成带编号的全局计划，逐步监控当前阶段"),
+}
 EVENT_NAMES = {
     "initial_observation": "初始观察",
     "planner_decision": "Planner 决策",
@@ -40,6 +47,8 @@ EVENT_NAMES = {
     "verifier": "环境终局",
 }
 REASONS = {
+    "step_feedback": "单步动作与公开观察",
+    "environment_limit": "达到环境交互限制",
     "budget_pause": "达到预设返回边界",
     "native_return": "阶段原生返回",
     "task_finish": "环境任务终止",
@@ -325,19 +334,20 @@ def result_row(mode, record):
     )
 
 
-def links_to_events(mode, refs, label="事件引用"):
+def links_to_events(mode, refs, label="事件引用", *, event_ids=None):
     if not refs:
         return ""
     links = []
     for ref in refs:
-        if type(ref) is int:
-            links.append(f'<a href="#{event_anchor(mode, ref)}">#{ref}</a>')
+        target = ref if event_ids is None else event_ids.get(ref) if type(ref) is int else None
+        if type(ref) is int and type(target) is int:
+            links.append(f'<a href="#{event_anchor(mode, target)}">#{ref}</a>')
         else:
             links.append(f"<code>{html(ref)}</code>")
     return f'<div class="small">{label} {" · ".join(links)}</div>'
 
 
-def render_event(mode, event, previous):
+def render_event(mode, event, previous, observation_events=None):
     kind, event_id = event["type"], event["event_id"]
     name = EVENT_NAMES.get(kind, kind)
     refs = event.get("evidence_refs") or event.get("tool_event_refs")
@@ -390,7 +400,9 @@ def render_event(mode, event, previous):
     if version is not None:
         context.append(f"规划版本 {html(version)}")
     metadata = f'<span class="small event-meta">{" · ".join(context)}</span>' if context else ""
-    evidence = links_to_events(mode, refs)
+    observation_refs = observation_events is not None and event.get("evidence_refs") is not None
+    evidence = links_to_events(mode, refs, "观察引用" if observation_refs else "事件引用",
+                               event_ids=observation_events if observation_refs else None)
     if model_ref is not None:
         evidence += links_to_events(mode, [model_ref], "对应模型调用")
     elif kind.endswith("_error") and previous is not None:
@@ -420,7 +432,9 @@ def trace(mode, record, raw_path, output):
     }
     raw_link = link(raw_path, f"下载 {label} 原始 JSON", output)
     timeline = record.get("events", [])
-    log = "".join(render_event(mode, event, timeline[index - 1] if index else None)
+    observation_events = {event["observation_id"]: event["event_id"] for event in timeline
+                          if "observation_id" in event} or None
+    log = "".join(render_event(mode, event, timeline[index - 1] if index else None, observation_events)
                   for index, event in enumerate(timeline))
     return (
         f'<article class="trace" id="{mode}"><div class="trace-head"><div class="trace-title">'
@@ -475,6 +489,7 @@ def accumulate_attempt_cost(cost, record):
         cost["incomplete"] += 1
     cost["actions"] += sum(event.get("dispatched", event.get("action") is not None)
                            for event in events(record, "tool_event"))
+    cost["actions"] += sum(event.get("dispatched") is True for event in events(record, "tool_error"))
     for call in events(record, "model_call"):
         cost[call["role"]] += 1
         if call.get("error") in {"PromptBudgetExceeded", "RequestBudgetExceeded"}:
@@ -684,7 +699,7 @@ def load_benchmark_trials(run_dir, manifest, *, preview=False):
     return trials
 
 
-def benchmark_score_row(mode, model, trials, model_scores, shared_scores, add_model):
+def benchmark_score_row(mode, model, trials, model_scores, shared_scores, add_model, mode_count):
     scores = [trial.score for trial in trials if trial.score is not None]
     count = len(scores)
     total = math.fsum(scores)
@@ -706,12 +721,12 @@ def benchmark_score_row(mode, model, trials, model_scores, shared_scores, add_mo
     stops = Counter(trial.stop for trial in trials)
     stop_text = "<br>".join(f"{html(reason)} ×{amount}" for reason, amount in stops.items())
     model_cell = (
-        f'<th scope="rowgroup" rowspan="{len(MODES)}">{html(model)}<br>'
+        f'<th scope="rowgroup" rowspan="{mode_count}">{html(model)}<br>'
         f'<span class="small">配对任务 {len(model_scores):,} / {len(trials):,}</span></th>'
         if add_model else ""
     )
     return (
-        f'<tr>{model_cell}<th scope="row" class="mode">{MODES[mode][0]}</th>'
+        f'<tr>{model_cell}<th scope="row" class="mode">{MODE_DETAILS[mode][0]}</th>'
         f'<td class="number">{average}</td><td class="number">{model_average}</td>'
         f'<td class="number"><strong>{shared_average}</strong></td>'
         f'<td class="number">{total:g} / {count}</td>'
@@ -723,11 +738,12 @@ def benchmark_score_row(mode, model, trials, model_scores, shared_scores, add_mo
     )
 
 
-def benchmark_task_row(task, models, trials, output):
+def benchmark_task_row(task, models, trials, output, modes):
     task_id = task["task_id"]
     cells = []
     for model in models:
-        for index, (mode, (mode_label, _)) in enumerate(MODES.items()):
+        for index, mode in enumerate(modes):
+            mode_label = MODE_DETAILS[mode][0]
             trial = trials[model, task_id, mode]
             group = " group-start" if index == 0 else ""
             if trial.score is None:
@@ -749,18 +765,18 @@ def benchmark_task_row(task, models, trials, output):
     return f'<tr><th scope="row"><span class="number">{html(task_id)}</span> · {html(goal)}</th>{"".join(cells)}</tr>'
 
 
-def benchmark_matrix(tasks, models, trials, output):
-    columns = f'<colgroup span="{len(MODES)}"></colgroup>' * len(models)
-    model_headers = "".join(f'<th scope="colgroup" colspan="{len(MODES)}">{html(model)}</th>' for model in models)
+def benchmark_matrix(tasks, models, trials, output, modes=MODES):
+    columns = f'<colgroup span="{len(modes)}"></colgroup>' * len(models)
+    model_headers = "".join(f'<th scope="colgroup" colspan="{len(modes)}">{html(model)}</th>' for model in models)
     mode_headers = len(models) * "".join(
-        f'<th scope="col" class="{"group-start" if index == 0 else ""}">{label}</th>'
-        for index, (label, _) in enumerate(MODES.values())
+        f'<th scope="col" class="{"group-start" if index == 0 else ""}">{MODE_DETAILS[mode][0]}</th>'
+        for index, mode in enumerate(modes)
     )
     page_size = 24
     groups = []
     for start in range(0, len(tasks), page_size):
         page = tasks[start:start + page_size]
-        rows = "".join(benchmark_task_row(task, models, trials, output) for task in page)
+        rows = "".join(benchmark_task_row(task, models, trials, output, modes) for task in page)
         label = f"第 {start + 1}–{start + len(page)} 项"
         opened = " open" if start == 0 else ""
         groups.append(f"""
@@ -773,12 +789,22 @@ def benchmark_matrix(tasks, models, trials, output):
     return "".join(groups)
 
 
+def manifest_modes(manifest):
+    modes = manifest.get("modes", list(MODES))
+    if (not isinstance(modes, list) or not modes
+            or any(not isinstance(mode, str) or mode not in MODE_DETAILS for mode in modes)
+            or len(modes) != len(set(modes))):
+        raise ValueError("Invalid benchmark mode list")
+    return modes
+
+
 def matched_trials(run_dir, manifest, *, preview=False):
     tasks = manifest["benchmark"]["tasks"]
     models = manifest["model_order"]
     trials = load_benchmark_trials(run_dir, manifest, preview=preview)
-    expected = {(model, task["task_id"], mode) for model in models for task in tasks for mode in MODES}
-    if trials.keys() != expected or len(expected) != len(models) * len(tasks) * len(MODES):
+    modes = manifest_modes(manifest)
+    expected = {(model, task["task_id"], mode) for model in models for task in tasks for mode in modes}
+    if trials.keys() != expected or len(expected) != len(models) * len(tasks) * len(modes):
         raise ValueError("Benchmark manifest does not contain one trial per configuration and matched task")
     return trials
 
@@ -788,6 +814,7 @@ def terminal_protocol(manifest):
     budget = manifest["budget"]
     return (
         manifest["purpose"], manifest["models"], manifest["model_order"], manifest["runtime"],
+        manifest.get("protocol_version"), manifest_modes(manifest),
         *(dataset.get(key) for key in ("name", "selection", "split", "canonical_task_count", "data_version",
                                        "source_commit", "constraints")),
         *(budget.get(key) for key in ("executor_limit", "planner_limits", "return_every",
@@ -806,14 +833,27 @@ def render_benchmark(run_dir, output, section_id, *, manifest=None, supplements=
         raise ValueError("Expected a completed paired benchmark manifest")
     benchmark = manifest["benchmark"]
     budget = manifest["budget"]
+    modes = manifest_modes(manifest)
     tasks, models = list(benchmark["tasks"]), manifest["model_order"]
+    role_models = manifest.get("models", {})
+    model_scope = (
+        "使用 Planner 的配置中，两个角色采用同一基座模型。"
+        if role_models and all(settings["planner"]["model"] == settings["executor"]["model"]
+                               for settings in role_models.values())
+        else "Planner 与 Executor 分别按运行清单中的角色配置调用模型。"
+    )
     limits = sorted({entry["executor_limit"] for entry in budget.get("budgets_by_task", {}).values()})
+    budget_unit = "Executor 请求" if budget.get("return_every") else "环境动作"
+    action_scope = ("提交动作包含适配器拒绝的命令。" if budget.get("return_every")
+                    else "环境动作按实际派发计数，含后端执行出错的派发。")
     if budget["executor_limit"] is not None:
-        executor_budget = f'每条轨迹至多 {html(budget["executor_limit"])} 次 Executor 请求。'
+        executor_budget = f'每条轨迹至多 {html(budget["executor_limit"])} 次{budget_unit}。'
     elif limits:
-        executor_budget = f"任务级 Executor 请求上限为 {limits[0]} 到 {limits[-1]} 次。"
+        executor_budget = f"任务级{budget_unit}上限为 {limits[0]} 到 {limits[-1]} 次。"
     else:
-        executor_budget = "任务级 Executor 请求上限见运行清单。"
+        executor_budget = f"任务级{budget_unit}上限见运行清单。"
+    return_budget = (f'动态框架每 {html(budget["return_every"])} 轮检查返回。'
+                     if budget.get("return_every") else "")
     full_split = benchmark.get("selection") == "full_split"
     if full_split and benchmark.get("canonical_task_count") != len(tasks):
         raise ValueError("Complete-split selection does not match the canonical task count")
@@ -834,7 +874,7 @@ def render_benchmark(run_dir, output, section_id, *, manifest=None, supplements=
             raise ValueError("Reviewed Terminal-Bench coverage exceeds the canonical task count")
     task_ids = [task["task_id"] for task in tasks]
     model_matches = {
-        model: {task_id for task_id in task_ids if all(trials[model, task_id, mode].score is not None for mode in MODES)}
+        model: {task_id for task_id in task_ids if all(trials[model, task_id, mode].score is not None for mode in modes)}
         for model in models
     }
     shared = [task_id for task_id in task_ids if all(task_id in matches for matches in model_matches.values())]
@@ -844,10 +884,10 @@ def render_benchmark(run_dir, output, section_id, *, manifest=None, supplements=
         rows = "".join(benchmark_score_row(
             mode, model, [trials[model, task["task_id"], mode] for task in tasks],
             [trials[model, task_id, mode].score for task_id in matched],
-            [trials[model, task_id, mode].score for task_id in shared], index == 0,
-        ) for index, mode in enumerate(MODES))
+            [trials[model, task_id, mode].score for task_id in shared], index == 0, len(modes),
+        ) for index, mode in enumerate(modes))
         groups.append(f'<tbody class="model-rows">{rows}</tbody>')
-    matrix = benchmark_matrix(tasks, models, trials, output)
+    matrix = benchmark_matrix(tasks, models, trials, output, modes)
     scored = sum(trial.score is not None for trial in trials.values())
     replayed = sum(trial.replay is not None for trial in trials.values())
     harbor_budget = sum(trial.harbor_budget is not None for trial in trials.values())
@@ -857,6 +897,8 @@ def render_benchmark(run_dir, output, section_id, *, manifest=None, supplements=
     scope = html(benchmark["split"])
     if full_split and benchmark["split"] == "test":
         scope = "完整测试集"
+    elif benchmark.get("selection") == "single_task":
+        scope = "单任务真实环境验收"
     elif benchmark.get("selection") == "reviewed_subset":
         scope = f'已审阅子集 · {len(tasks)} / {html(benchmark.get("canonical_task_count"))} 个官方任务'
     if benchmark.get("data_version"):
@@ -895,19 +937,19 @@ def render_benchmark(run_dir, output, section_id, *, manifest=None, supplements=
     sources = "".join(link(path, label, output) for path, label in files if path.is_file())
     return f"""
 <section id="{section_id}" class="benchmark"><h2>{html(benchmark["name"])} 配对评测</h2>
-<p class="muted">{scope} · {len(models)} 个模型 × {len(MODES)} 种框架 × {len(tasks)} 个计划任务 · 每格保留一条最终记录。</p>
+<p class="muted">{scope} · {len(models)} 个 Executor 模型 × {len(modes)} 种框架 × {len(tasks)} 个计划任务 · 每格保留一条最终记录。</p>
 <p class="small">有效评分 {scored:,} / {len(trials):,}。全配置配对任务 {len(shared):,} / {len(tasks):,}。{scoring}</p>
-<p class="small">使用 Planner 的配置为两个角色选用同一基座模型。各配置在相同任务上共用环境、工具与执行额度。{executor_budget}动态框架每 {html(budget["return_every"])} 轮检查返回。{run_time}</p>
+<p class="small">{model_scope}各配置在相同任务上共用环境与执行额度。{executor_budget}{return_budget}{run_time}</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="模型与框架汇总">
-<table><thead><tr><th scope="col">基础模型</th><th scope="col">框架</th><th scope="col">有效任务均值</th>
+<table><thead><tr><th scope="col">Executor 模型</th><th scope="col">框架</th><th scope="col">有效任务均值</th>
 <th scope="col">模型内配对均值</th><th scope="col">全配置配对均值</th>
 <th scope="col">得分和 / 有效数</th><th scope="col">有效 / 计划</th>
 <th scope="col">失败 / 缺评</th><th scope="col">提交动作</th><th scope="col">调用尝试 P / E</th>
 <th scope="col">总 token</th><th scope="col">停止原因</th></tr></thead>
 {"".join(groups)}</table></div>
-<p class="small">有效任务均值使用本配置已评分的任务。模型内配对均值使用该模型四种框架均有评分的任务。全配置配对均值使用所有模型和框架均有评分的任务。</p>
+<p class="small">有效任务均值使用本配置已评分的任务。模型内配对均值使用该模型所有框架均有评分的任务。全配置配对均值使用所有模型和框架均有评分的任务。</p>
 <p class="small">失败指已评分且未达到成功条件。缺评计入计划分母。</p>
-<p class="small">提交动作包含适配器拒绝的命令。调用尝试也包含发送前被本地预算拦截的请求。总量和推理 token 取服务端实报字段，用量缺失时显示已知下界或未知。{cost_note}</p>
+<p class="small">{action_scope}调用尝试也包含发送前被本地预算拦截的请求。总量和推理 token 取服务端实报字段，用量缺失时显示已知下界或未知。{cost_note}</p>
 <h3>逐任务得分</h3>
 <p class="small">点击分值打开最终评分轨迹。缺评格提供停止原因。每个任务的初始环境在所有配置间独立重置。</p>
 {matrix}
@@ -978,7 +1020,8 @@ def render(run_dir, output, prior_audit=None, benchmark_dirs=()):
     supplements = [benchmark_runs[index] for index in terminal_indices[1:]]
     paired = "".join(
         render_alfworld_entry(output, f"benchmark-{index + 1}")
-        if run["benchmark"]["name"] == "ALFWorld" and run["benchmark"].get("selection") == "full_split"
+        if (run["benchmark"]["name"] == "ALFWorld" and run["benchmark"].get("selection") == "full_split"
+            and not run.get("protocol_version"))
         else render_benchmark(directory, output, f"benchmark-{index + 1}", manifest=run,
                               supplements=supplements if index == primary_terminal else ())
         for index, (directory, run) in enumerate(benchmark_runs) if index not in terminal_indices[1:]

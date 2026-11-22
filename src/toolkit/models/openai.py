@@ -1,4 +1,4 @@
-"""Model clients used by Planner experiments."""
+"""OpenAI-compatible model clients and usage accounting."""
 
 import asyncio
 import time
@@ -7,7 +7,6 @@ from contextlib import nullcontext
 import openai
 
 from .base import BaseModel
-from ..utils.config import DEFAULT_CONFIG
 
 
 class AsyncChatClient:
@@ -35,16 +34,16 @@ class AsyncChatClient:
         await self.close()
 
 
-class ExecutorRequestFailed(RuntimeError):
+class ModelRequestFailed(RuntimeError):
     code = "request_error"
 
     def __init__(self, error_type):
         self.error_type = error_type
-        super().__init__(f"Executor request failed ({error_type})")
+        super().__init__(f"Model request failed ({error_type})")
 
 
-class MeteredExecutor(BaseModel):
-    """An OpenAI-compatible Executor with per-rollout usage counters."""
+class MeteredChatModel(BaseModel):
+    """An OpenAI-compatible chat model with per-run usage counters."""
 
     TOKEN_FIELDS = (
         "prompt_tokens", "completion_tokens", "total_tokens",
@@ -52,13 +51,13 @@ class MeteredExecutor(BaseModel):
     )
 
     def __init__(self, config):
-        self.config = {**DEFAULT_CONFIG["executor"], **config}
+        self.config = dict(config)
         if not self.config["model_name"]:
-            raise ValueError("Executor model_name is required")
+            raise ValueError("model_name is required")
         self.request_timeout = self.config["request_timeout"]
         self.request_max_retries = self.config["request_max_retries"]
         if self.request_timeout <= 0 or self.request_max_retries < 0:
-            raise ValueError("Executor timeout must be positive and retries nonnegative")
+            raise ValueError("Model timeout must be positive and retries nonnegative")
         self.stop_words = ["\nObservation:", "\nTask:", "\n---"]
         self.client = openai.OpenAI(**self._client_options())
         self._async_client = None
@@ -68,7 +67,7 @@ class MeteredExecutor(BaseModel):
     def _client_options(self):
         return {
             "base_url": self.config["api_base"],
-            "api_key": self.config.get("api_key", "EMPTY"),
+            "api_key": self.config["api_key"],
             "timeout": self.request_timeout,
             "max_retries": 0,
         }
@@ -94,9 +93,12 @@ class MeteredExecutor(BaseModel):
         if prefix is not None:
             options["messages"] = messages + [{"role": "assistant", "content": prefix}]
             body.update(continue_final_message=True, add_generation_prompt=False)
-        thinking = self.config["deepseek_thinking"]
+        thinking = self.config["thinking"]
         if thinking is not None:
             body["thinking"] = {"type": thinking}
+        reasoning_effort = self.config["reasoning_effort"]
+        if reasoning_effort is not None:
+            options["reasoning_effort"] = reasoning_effort
         if body:
             options["extra_body"] = body
         return options
@@ -108,7 +110,7 @@ class MeteredExecutor(BaseModel):
                 response = self.client.chat.completions.create(**options)
             except openai.APIError as error:
                 if attempt > self.request_max_retries:
-                    raise ExecutorRequestFailed(type(error).__name__) from None
+                    raise ModelRequestFailed(type(error).__name__) from None
                 time.sleep(min(attempt, 2))
             else:
                 return self._response_content(response)
@@ -122,7 +124,7 @@ class MeteredExecutor(BaseModel):
                 response = await self._async_client.complete(**options)
             except openai.APIError as error:
                 if attempt > self.request_max_retries:
-                    raise ExecutorRequestFailed(type(error).__name__) from None
+                    raise ModelRequestFailed(type(error).__name__) from None
                 await asyncio.sleep(min(attempt, 2))
             else:
                 return self._response_content(response)
@@ -139,7 +141,7 @@ class MeteredExecutor(BaseModel):
         self._record_response(token_usage=token_usage, model=getattr(response, "model", None))
         content = response.choices[0].message.content
         if not isinstance(content, str) or not content.strip():
-            raise ValueError("Executor returned an empty message")
+            raise ValueError("Model returned an empty message")
         return content
 
     def close(self):
@@ -154,6 +156,3 @@ class MeteredExecutor(BaseModel):
                 self._async_client = None
         finally:
             self.close()
-
-    def usage_metadata(self):
-        return {f"executor_{key}": value for key, value in super().usage_metadata().items()}

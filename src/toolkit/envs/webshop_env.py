@@ -74,15 +74,16 @@ class WebShopEnv(BaseEnv):
     def execute_action(self, action):
         match = WEBSHOP_ACTION.fullmatch(action)
         if match is None or not (target := match[2].strip()):
-            return ActionResult("Choose one action from the current environment actions.", self.state.reward, False)
+            return ActionResult("Choose one action from the current environment actions.", self.state.reward, False,
+                                dispatched=False)
         verb = match[1]
         if verb == "search":
             allowed = self.available["has_search_bar"] and target.split()[0].lower() not in INTERNAL_SEARCH_PREFIXES
         else:
             allowed = target.lower() != "search" and target.lower() in self.available["clickables"]
         if not allowed:
-            return ActionResult("That action is not available.", self.state.reward, False)
-        observation, reward, done, _ = self.env.step(f"{verb}[{target}]")
+            return ActionResult("That action is not available.", self.state.reward, False, dispatched=False)
+        observation, reward, done, _ = self.dispatch(self.env.step, f"{verb}[{target}]")
         if not done:
             self.available = self.env.get_available_actions()
         return ActionResult(observation, float(reward), True, done=done, success=done and reward >= 1.0)

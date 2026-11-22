@@ -32,6 +32,8 @@ class LiveBackendTest(unittest.TestCase):
                 env = AlfWorldEnv(task, **alfworld_settings())
                 prompt, _ = env.reset()
                 self.assertIn(row["task"], prompt)
+                self.assertNotIn("Your task is to:", env.initial_observation)
+                self.assertEqual(prompt.count("Your task is to:"), 1)
                 _, state = env.step("Action: look")
                 self.assertEqual(state.steps, 1)
                 self.assertTrue(state.action_trace[-1]["valid"])

@@ -77,12 +77,27 @@ class WebShopReplayTest(unittest.TestCase):
             ]
             client = SimpleNamespace(complete=AsyncMock(side_effect=responses))
             workspace = f"fixture-run/{trial_id}/attempt-1"
+            historical_constraints = ["Act only through the provided WebShop text environment."]
             with fixture_environment(server, task, 15) as env:
+                if task.task_id == "0":
+                    reset = env.reset
+
+                    def historical_reset():
+                        _, state = reset()
+                        state.history[0]["content"] += (
+                            "\n\nHard constraints for the entire task:\n- " + historical_constraints[0]
+                        )
+                        return state.history[0]["content"], state
+
+                    env.reset = historical_reset
                 record = await run_framework(
                     mode="eo", env=env, planner=None, executor=model_call(client, "executor", 15, max_input_bytes=cap),
-                    goal=task.observation, constraints=shop.CONSTRAINTS, workspace_id=workspace,
+                    goal=task.observation, workspace_id=workspace,
                     executor_limit=15, planner_limit=0, return_every=2, save=lambda _: None, benchmark="webshop",
                 )
+            self.assertNotIn("constraints", record)
+            if task.task_id == "0":
+                record["constraints"] = historical_constraints
             self.assertEqual(client.complete.await_count, 2)
             self.assertEqual(record["events"][-3]["error"], "PromptBudgetExceeded")
             save_trial(path, {"run_id": "fixture-run", "trial_id": trial_id, "model": "fixture",
@@ -145,7 +160,8 @@ class WebShopReplayTest(unittest.TestCase):
                   patch.object(shop, "load_test_split", return_value=(catalog, tasks)),
                   patch.object(shop, "shared_server", new=fixture_server),
                   patch.object(shop, "isolated_environment", side_effect=replay_environment),
-                  patch.object(shop.os, "getenv", side_effect=AssertionError("Replay must not read a model credential"))):
+                  patch.object(shop, "load_model_settings",
+                               side_effect=AssertionError("Replay must not read a model credential"))):
                 shop.main()
 
             for task_id in ("0", "2"):

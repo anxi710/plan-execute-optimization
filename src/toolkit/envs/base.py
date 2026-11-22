@@ -16,10 +16,14 @@ class ActionResult:
     valid: bool
     done: bool = False
     success: bool = False
+    dispatched: bool = True
 
 
 class BaseEnv(ABC):
     """Manage an Executor conversation for one already loaded task."""
+
+    count_dispatched = False
+    last_dispatched = False
 
     def __init__(self, *, observation, instruction,
                  max_steps=DEFAULT_CONFIG["environments"]["default_max_steps"]):
@@ -57,19 +61,24 @@ class BaseEnv(ABC):
 
     def step(self, reply):
         state = self.state
+        self.last_dispatched = False
         state.history.append({"role": "assistant", "content": reply})
         action = None
         try:
             action = self.parse_action(reply)
         except ValueError:
-            result = ActionResult("Invalid format. Supply one nonempty 'Action: ...' line.", state.reward, False)
+            result = ActionResult("Invalid format. Supply one nonempty 'Action: ...' line.", state.reward, False,
+                                  dispatched=False)
         else:
             result = self.execute_action(action)
         state.reward = result.reward
-        state.steps += 1
+        self.last_dispatched = result.dispatched
+        state.steps += int(result.dispatched or not self.count_dispatched)
         observation = f"Observation: {result.observation}"
         feedback, actions = self._executor_feedback(observation, terminal=result.done)
         event = {"action": action, "observation": observation, "valid": result.valid}
+        if self.count_dispatched:
+            event["dispatched"] = result.dispatched
         if actions is not None:
             event["available_actions"] = list(actions)
         state.action_trace.append(event)
@@ -82,6 +91,10 @@ class BaseEnv(ABC):
             state.finished = True
             state.terminate_reason = "max_steps"
         return feedback, state
+
+    def dispatch(self, step, action):
+        self.last_dispatched = True
+        return step(action)
 
     @abstractmethod
     def execute_action(self, action: str) -> ActionResult:

@@ -4,12 +4,14 @@ import json
 import re
 
 from toolkit.prompts import (
-    DELEGATED_STAGE_TEMPLATE, HARD_CONSTRAINTS_TEMPLATE, PC_CONTROL_TEMPLATE, PC_TERMINAL_CONTROL_TEMPLATE,
+    DELEGATED_STAGE_TEMPLATE, PC_CONTROL_TEMPLATE, PC_TERMINAL_CONTROL_TEMPLATE,
     PE_D_CONTROL_TEMPLATE, PLAN_GUIDANCE_TEMPLATE, PLAN_HINT, PLANNER_CONTEXT_TEMPLATE,
     PLANNER_DECISION_TEMPLATE, PLANNER_TASK_REQUIREMENTS_TEMPLATE, extract_plan, render_planner_prompt,
 )
 from toolkit.rollout.log import EventLog
 from toolkit.rollout.session import RolloutSession
+
+from .runtime import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, FrameworkRun
 
 
 MODES = ("eo", "pe-s", "pe-d", "pc")
@@ -74,23 +76,22 @@ def _executor_usage(events):
 class _FrameworkController:
     """Apply framework decisions while the rollout session advances execution."""
 
-    def __init__(self, *, mode, env, planner, executor, goal, constraints, workspace_id,
+    def __init__(self, *, mode, env, planner, executor, goal, workspace_id,
                  executor_limit, planner_limit, return_every, save, benchmark, external_verifier):
         self.mode = mode
         self.benchmark = benchmark
         self.external_verifier = external_verifier
         self.goal = goal
-        self.constraints = list(constraints)
         self.workspace_id = workspace_id
         self.budgets = {"executor_limit": executor_limit, "planner_limit": planner_limit,
                         "return_every": return_every}
-        self.record = {"mode": mode, "workspace_id": workspace_id, "goal": goal, "constraints": self.constraints,
+        self.record = {"mode": mode, "workspace_id": workspace_id, "goal": goal,
                        "budgets": self.budgets, "events": [], "outcome": None}
         self.events = self.record["events"]
         self.plan_version = 0
         self.stage_number = 0
         self.request_id = None if mode == "pc" else f"{workspace_id}:task"
-        self.planner_state = {"goal": goal, "constraints": self.constraints, "observed_facts": [],
+        self.planner_state = {"goal": goal, "observed_facts": [],
                               "evidence_refs": [], "hypotheses": [], "global_plan": None,
                               "remaining_work": [], "plan_version": 0}
         self.public_observations = {}
@@ -108,9 +109,6 @@ class _FrameworkController:
 
     def initialize_session(self):
         self.session.reset()
-        if self.constraints:
-            listed = "\n".join(f"- {constraint}" for constraint in self.constraints)
-            self.state.history[0]["content"] += HARD_CONSTRAINTS_TEMPLATE.format(constraints=listed)
         self.initial_observation = self.session.env.initial_observation
         event = self.log.emit("initial_observation", observation=self.initial_observation)
         self.public_observations[event["event_id"]] = self.initial_observation
@@ -118,7 +116,7 @@ class _FrameworkController:
     def build_planner_messages(self, *, terminal):
         prompt = render_planner_prompt(self.benchmark, self.initial_observation)
         if self.mode == "pe-s":
-            context = {"goal": self.goal, "hard_constraints": self.constraints}
+            context = {"goal": self.goal}
             return [{"role": "user", "content": PLANNER_TASK_REQUIREMENTS_TEMPLATE.format(
                 prompt=prompt, context=json.dumps(context),
             )}]
@@ -127,7 +125,7 @@ class _FrameworkController:
             control = PC_TERMINAL_CONTROL_TEMPLATE
         protocol = PLANNER_DECISION_TEMPLATE.format(control=control)
         planner_state = {key: self.planner_state[key] for key in (
-            "goal", "constraints", "global_plan", "hypotheses", "remaining_work", "evidence_refs",
+            "goal", "global_plan", "hypotheses", "remaining_work", "evidence_refs",
         )}
         planner_state["observed_facts"] = [
             {"event_id": ref, "observation": observation} for ref, observation in self.public_observations.items()
@@ -191,10 +189,10 @@ class _FrameworkController:
     def issue_execution_request(self, stage=None, guidance=None, refs=()):
         if not self.request_id:
             raise RuntimeError("Executor scope has no request ID")
-        self.log.emit("execution_request", goal=self.goal, stage_objective=stage, hard_constraints=self.constraints,
+        self.log.emit("execution_request", goal=self.goal, stage_objective=stage,
                    soft_guidance=guidance, evidence_refs=list(refs))
         if stage is not None:
-            request = {"goal": self.goal, "stage_objective": stage, "hard_constraints": self.constraints,
+            request = {"goal": self.goal, "stage_objective": stage,
                        "soft_guidance": guidance, "evidence": [
                            {"event_id": ref, "observation": self.public_observations[ref]} for ref in refs
                        ]}
@@ -272,19 +270,29 @@ class _FrameworkController:
         return self.record
 
 
-async def run_framework(*, mode, env, planner, executor, goal, constraints, workspace_id,
-                    executor_limit, planner_limit, return_every, save, benchmark="alfworld", external_verifier=False):
+async def run_framework(*, mode, env, planner, executor, goal, workspace_id,
+                        executor_limit, save, planner_limit=None, return_every=None, benchmark="alfworld",
+                        external_verifier=False, protocol_version=None):
     """Apply a framework's control policy over a persistent rollout session."""
+    if type(executor_limit) is not int or executor_limit < 1:
+        raise ValueError("executor_limit must be an integer of at least 1")
+    if getattr(env, "max_steps", executor_limit) < executor_limit:
+        raise ValueError("Environment limits must permit the requested Executor budget")
+    options = dict(mode=mode, env=env, planner=planner, executor=executor, goal=goal,
+                   workspace_id=workspace_id, executor_limit=executor_limit, save=save, benchmark=benchmark,
+                   external_verifier=external_verifier)
+    if protocol_version not in {None, FRAMEWORK_PROTOCOL}:
+        raise ValueError(f"Unsupported execution protocol: {protocol_version}; historical records remain read-only")
+    use_framework_protocol = (protocol_version == FRAMEWORK_PROTOCOL or mode not in MODES
+                              or (mode in {"eo", "pe-s"} and planner_limit is None and return_every is None))
+    if use_framework_protocol:
+        if mode not in FRAMEWORK_MODES:
+            raise ValueError(f"Unknown framework mode: {mode}")
+        return await FrameworkRun(**options).run()
     if mode not in MODES:
         raise ValueError(f"Unknown framework: {mode}")
-    for name, value, minimum in (("executor_limit", executor_limit, 1), ("return_every", return_every, 1),
+    for name, value, minimum in (("return_every", return_every, 1),
                                  ("planner_limit", planner_limit, int(mode != "eo"))):
         if type(value) is not int or value < minimum:
             raise ValueError(f"{name} must be an integer of at least {minimum}")
-    if getattr(env, "max_steps", executor_limit) < executor_limit:
-        raise ValueError("Environment limits must permit the requested Executor budget")
-    return await _FrameworkController(
-        mode=mode, env=env, planner=planner, executor=executor, goal=goal, constraints=constraints,
-        workspace_id=workspace_id, executor_limit=executor_limit, planner_limit=planner_limit,
-        return_every=return_every, save=save, benchmark=benchmark, external_verifier=external_verifier,
-    ).run()
+    return await _FrameworkController(**options, planner_limit=planner_limit, return_every=return_every).run()

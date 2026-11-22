@@ -1,0 +1,19 @@
+models:
+  - DeepSeek-V4.1-Flash
+  - MiniMax-M3.1-Flash
+  - GLM-5.3-Flash
+  - Qwen3.8-27B
+
+toolkit:
+  planner_generation:
+    model_name: null
+    api_base: https://agi.tongji.edu.cn/v1
+    api_key: null
+    thinking: null
+    reasoning_effort: none
+  executor:
+    model_name: DeepSeek-V4.1-Flash
+    api_base: https://agi.tongji.edu.cn/v1
+    api_key: null
+    thinking: null
+    reasoning_effort: none

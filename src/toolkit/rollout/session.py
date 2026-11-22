@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from copy import deepcopy
 from inspect import isawaitable
 from time import perf_counter
 
@@ -12,8 +13,10 @@ from .state import State
 class RolloutSession:
     """Share model calls, environment turns, and resumable execution."""
 
-    def __init__(self, env, models, *, log=None, plan_injection=None):
+    def __init__(self, env, models, *, log=None, plan_injection=None, count_dispatched=False):
         self.env = env
+        if count_dispatched:
+            self.env.count_dispatched = True
         self.models = models
         self.log = EventLog() if log is None else log
         self.plan_injection = plan_injection
@@ -28,15 +31,16 @@ class RolloutSession:
             self.state.history[0]["content"] = prompt
         return prompt, self.state
 
-    async def call(self, role, messages):
+    async def call(self, role, messages, **model_options):
         self.phase = "request"
         self.attempts[role] += 1
-        messages = [message.copy() for message in messages]
+        messages = deepcopy(messages)
+        request_options = {"request_options": deepcopy(model_options)} if model_options else {}
         event = self.log.emit("model_call", role=role, messages=messages, response=None, error=None,
-                              status="pending", seconds=None)
+                              status="pending", seconds=None, **request_options)
         started = perf_counter()
         try:
-            response = await self.models[role](messages)
+            response = await self.models[role](messages, **model_options)
         except (asyncio.CancelledError, KeyboardInterrupt) as error:
             event.update(status="interrupted", error=type(error).__name__)
             raise
@@ -51,8 +55,9 @@ class RolloutSession:
             event["seconds"] = perf_counter() - started
             self.log.flush()
 
-    async def step(self):
-        call = await self.call("executor", self.state.history)
+    async def step(self, messages=None, *, call=None):
+        if call is None:
+            call = await self.call("executor", self.state.history if messages is None else messages)
         text = call["response"].get("text")
         text = text if isinstance(text, str) else ""
         claims = re.split(r"^Action:[ \t]*", text, maxsplit=1, flags=re.MULTILINE)[0].strip()
@@ -63,8 +68,10 @@ class RolloutSession:
             observation, self.state = await result if isawaitable(result) else result
             if self.plan_injection is not None:
                 self.state.history[-1]["content"] = self.plan_injection.observation(observation)
-        except Exception as error:
+        except (Exception, asyncio.CancelledError, KeyboardInterrupt) as error:
+            dispatched = getattr(self.env, "last_dispatched", None)
             self.log.emit("tool_error", error=type(error).__name__, model_event_id=call["event_id"],
+                          dispatched=dispatched, result_unknown=dispatched is not False,
                           seconds=perf_counter() - started)
             raise
         self.phase = None

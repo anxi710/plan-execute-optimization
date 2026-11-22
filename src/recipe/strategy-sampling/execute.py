@@ -53,6 +53,12 @@ def equivalent_instruction_path(saved, settings):
     if (not isinstance(saved, dict) or not isinstance(saved.get("environment"), dict)
             or "instruction_path" not in saved["environment"]):
         return False
+    executor = saved.get("executor")
+    if isinstance(executor, dict):
+        if "deepseek_thinking" in executor and "thinking" not in executor:
+            executor["thinking"] = executor.pop("deepseek_thinking")
+        if executor.get("reasoning_effort") is None:
+            executor.pop("reasoning_effort", None)
     previous = saved["environment"].get("instruction_path")
     current = settings["environment"]["instruction_path"]
     if (previous != current and (previous is None or isinstance(previous, str))
@@ -72,11 +78,12 @@ def rollout_job(plan_id, row, sample_id, path, *, seed):
 
 
 async def execute(jobs, data_dir, env_config, agent_config, *, split, plan_placement, concurrency):
-    from toolkit.agents.openai_agent import MeteredExecutor
+    from toolkit.models.openai import MeteredChatModel
     from toolkit.envs.alfworld_env import AlfWorldEnv
     from toolkit.rollout.batch import run_rollouts
     from toolkit.tasks.alfworld import AlfWorldRolloutPool
 
+    agent_config = resolve_config({"executor": agent_config})["executor"]
     rows = {job.row["id"]: {**job.row, "plan": None} for job in jobs}
     pool = AlfWorldRolloutPool(data_dir, split, rows.values())
 
@@ -90,7 +97,7 @@ async def execute(jobs, data_dir, env_config, agent_config, *, split, plan_place
     results = await run_rollouts(
         jobs,
         open_slot=pool.open_slot,
-        create_agent=lambda seed: MeteredExecutor({**agent_config, "seed": seed}),
+        create_agent=lambda seed: MeteredChatModel({**agent_config, "seed": seed}),
         environment_factory=partial(AlfWorldEnv, **env_config),
         plan_placement=plan_placement,
         concurrency=concurrency,
@@ -131,8 +138,6 @@ def main(argv=None):
     agent_config = config["executor"].copy()
     if args.model is not None:
         agent_config["model_name"] = args.model
-    if "api_key" in agent_config:
-        parser.error("Set the API key through EXECUTOR_API_KEY, not YAML")
     for name, value, minimum in (
         ("concurrency", concurrency, 1), ("samples_per_plan", samples_per_plan, 1),
         ("max_steps", env_config["max_steps"], 1),
@@ -154,7 +159,9 @@ def main(argv=None):
         except BlockingIOError:
             parser.error("This run already has an active Executor process")
         save_settings(output / "run_settings.meta", {
-            "executor": agent_config, "environment": env_config, "data_dir": str(data_dir),
+            "executor": {name: value for name, value in agent_config.items()
+                         if name != "api_key" and (name != "reasoning_effort" or value is not None)},
+            "environment": env_config, "data_dir": str(data_dir),
             "environment_versions": {package: version(package) for package in ("alfworld", "textworld")},
             "executor_instruction": load_executor_instruction("alfworld", env_config["instruction_path"]),
             "split": split, "samples_per_plan": samples_per_plan, "plan_placement": placement,
@@ -180,9 +187,9 @@ def main(argv=None):
                     archived.append(sample)
                 pending.append(sample)
         if pending:
-            key = os.environ.get("EXECUTOR_API_KEY")
-            if not key or key == "EMPTY":
-                parser.error("Export EXECUTOR_API_KEY before executing pending samples")
+            key = agent_config["api_key"] or os.environ.get("OPENAI_API_KEY")
+            if not key:
+                parser.error("Set toolkit.executor.api_key or export OPENAI_API_KEY before executing pending samples")
             for sample in archived:
                 archive_incomplete_rollout(sample)
             completed_now, interrupted_now = asyncio.run(

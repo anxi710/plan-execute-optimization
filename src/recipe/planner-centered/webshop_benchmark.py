@@ -1,9 +1,8 @@
-"""Run all four frameworks on the complete 500-goal WebShop test split."""
+"""Run the matched frameworks on the complete 500-goal WebShop test split."""
 
 import argparse
 import asyncio
 import json
-import os
 import sqlite3
 import subprocess
 from contextlib import ExitStack, closing, contextmanager
@@ -12,17 +11,16 @@ from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
-from benchmark import CONCURRENCY, PURPOSE, SCHEMA_VERSION, run_matrix
-from run import model_call
+from benchmark import CONCURRENCY, PURPOSE, SCHEMA_VERSION, requested_protocol, run_matrix
+from run import CONFIG_PATH, load_model_settings, model_call
 from toolkit.envs.webshop_env import WebShopEnv, webshop_settings
 from toolkit.frameworks import run_framework
-from toolkit.prompts import HARD_CONSTRAINTS_TEMPLATE, render_action_feedback
+from toolkit.prompts import render_action_feedback
 from toolkit.tasks.webshop import WebShopTask
-from toolkit.utils.files import read_json, write_json
+from toolkit.utils.files import read_json, read_yaml_mapping, write_json
 from webshop_catalog import TEST_GOALS, UPSTREAM_REVISION, goal_key, shared_server
 
 
-CONSTRAINTS = ["Act only through the provided WebShop text environment."]
 REPLAY_METHOD = "webshop_native_context_limit_replay"
 
 
@@ -53,14 +51,16 @@ def isolated_environment(server, task, executor_limit):
 
 
 async def run_one(server, task, client, *, mode, workspace_id, model_settings, max_input_bytes,
-                  save, executor_limit, planner_limit, return_every):
+                  save, executor_limit, planner_limit, return_every, protocol_version=None):
     options = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
     with isolated_environment(server, task, executor_limit) as env:
         return await run_framework(
-            mode=mode, env=env, planner=model_call(client, "planner", planner_limit, **options) if planner_limit else None,
-            executor=model_call(client, "executor", executor_limit, **options), goal=task.observation,
-            constraints=CONSTRAINTS, workspace_id=workspace_id, executor_limit=executor_limit,
+            mode=mode, env=env, goal=task.observation,
+            planner=model_call(client, "planner", planner_limit, **options) if mode != "eo" else None,
+            executor=model_call(client, "executor", executor_limit if return_every is not None else None, **options),
+            workspace_id=workspace_id, executor_limit=executor_limit,
             planner_limit=planner_limit, return_every=return_every, save=save, benchmark="webshop",
+            protocol_version=protocol_version,
         )
 
 
@@ -200,8 +200,10 @@ def context_limit_evidence(record, identity, max_input_bytes, executor_limit):
 
 
 def replay_native_context_limits(run_dir, data_dir):
-    """Write separate native scores for exact WebShop replays without model calls."""
+    """Write separate native scores for exact replays of historical WebShop trials."""
     manifest = read_json(run_dir / "manifest.json")
+    if manifest.get("protocol_version") is not None:
+        raise ValueError("Context-limit replay requires the historical full-history protocol")
     dataset = manifest["benchmark"]
     metadata, rows = load_test_split(data_dir)
     verification = read_json(data_dir / "verified.json")
@@ -268,9 +270,10 @@ def replay_native_context_limits(run_dir, data_dir):
                     continue
                 if not legacy:
                     initial_message = state.history[0].copy()
-                    if record["constraints"]:
+                    if record.get("constraints"):
                         listed = "\n".join(f"- {constraint}" for constraint in record["constraints"])
-                        initial_message["content"] += HARD_CONSTRAINTS_TEMPLATE.format(constraints=listed)
+                        # Preserve the old request format when validating historical replay evidence.
+                        initial_message["content"] += f"\n\nHard constraints for the entire task:\n{listed}"
                     blocked = record["events"][blocked_id - 1]
                     if initial_message != blocked["messages"][0]:
                         print(f"{trial_id}: initial Executor input changed; still unscored")
@@ -306,7 +309,9 @@ def replay_native_context_limits(run_dir, data_dir):
     return recovered
 
 
-async def run_webshop(run_dir, data_dir, api_key, *, concurrency=CONCURRENCY, resume=False):
+async def run_webshop(run_dir, data_dir, api_key, *, concurrency=CONCURRENCY, resume=False, legacy=False,
+                       model_settings=None, model_order=None):
+    protocol = requested_protocol(run_dir, resume, legacy)
     metadata, rows = load_test_split(data_dir)
     verified = json.loads((data_dir / "verified.json").read_text(encoding="utf-8"))
     indexed_count = verified["indexed_products_verified"]
@@ -323,7 +328,7 @@ async def run_webshop(run_dir, data_dir, api_key, *, concurrency=CONCURRENCY, re
         "name": "WebShop", "split": "test", "data_version": metadata["source_revision"],
         "selection": "full_split", "canonical_task_count": TEST_GOALS,
         "canonical_task_file": str(data_dir / "webshop_test_tasks.jsonl"),
-        "data_dir": str(data_dir), "catalog": metadata, "catalog_verification": verified, "constraints": CONSTRAINTS,
+        "data_dir": str(data_dir), "catalog": metadata, "catalog_verification": verified,
         "runtime_packages": ["gym", "numpy", "openai", "pyserini", "PyYAML", "spacy", "en-core-web-sm"],
         "tasks": [{"task_id": task.task_id, "task": task.observation, "goal": task.observation,
                    "session": task.session, "executor_limit": settings["max_steps"]} for task in rows.values()],
@@ -333,15 +338,18 @@ async def run_webshop(run_dir, data_dir, api_key, *, concurrency=CONCURRENCY, re
             raise ValueError("WebShop full catalog, index or goals do not match their prepared manifest")
         reset_test_sessions(server, rows, settings["max_steps"])
         await run_matrix(run_dir, rows, dataset, api_key, run_one=partial(run_one, server),
-                         concurrency=concurrency, resume=resume)
+                         concurrency=concurrency, resume=resume, model_order=model_order,
+                         protocol_version=protocol, model_settings=model_settings)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--run-dir", required=True, type=Path)
     parser.add_argument("--data-dir", required=True, type=Path)
     parser.add_argument("--concurrency", type=int, default=CONCURRENCY)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--legacy", action="store_true", help="Run the historical four-framework protocol.")
     parser.add_argument("--replay-native", action="store_true",
                         help="Verify local input-budget failures by replaying the recorded actions, with no model calls")
     args = parser.parse_args()
@@ -351,12 +359,13 @@ def main():
         recovered = replay_native_context_limits(args.run_dir.resolve(), args.data_dir.resolve())
         print(f"Replayed {recovered} WebShop input-budget outcomes")
         return
-    api_key = os.getenv("TONGJI_API_KEY")
-    if not api_key:
-        parser.error("Set TONGJI_API_KEY in the environment")
+    model_settings, api_key = load_model_settings(args.config)
+    if not all(api_key.values()):
+        parser.error("Set api_key in the recipe config or OPENAI_API_KEY in the environment")
     try:
         asyncio.run(run_webshop(args.run_dir.resolve(), args.data_dir.resolve(), api_key,
-                                concurrency=args.concurrency, resume=args.resume))
+                                concurrency=args.concurrency, resume=args.resume, legacy=args.legacy,
+                                model_settings=model_settings, model_order=read_yaml_mapping(args.config).get("models")))
     except KeyboardInterrupt:
         parser.exit(130, "Benchmark interrupted.\n")
     except Exception as error:

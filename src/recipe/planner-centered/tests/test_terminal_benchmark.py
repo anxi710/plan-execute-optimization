@@ -1,6 +1,7 @@
 from hashlib import sha256
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,34 @@ import terminal_benchmark as terminal
 
 
 class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
+    def test_terminal_entry_uses_recipe_connection_and_models(self):
+        with TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text(
+                "models: [custom-model]\ntoolkit:\n  planner_generation:\n    model_name: planner-model\n"
+                "    api_base: http://planner.test/v1\n    api_key: planner-key\n  executor:\n"
+                "    model_name: custom-model\n    api_base: http://executor.test/v1\n    api_key: executor-key\n",
+                encoding="utf-8",
+            )
+            with (patch.dict(os.environ, {}, clear=True),
+                  patch.object(terminal, "run_benchmark", new_callable=AsyncMock) as dispatch):
+                terminal.main(["--config", str(config), "--terminal-bench-root", directory, "--run-dir", directory])
+            self.assertEqual(dispatch.await_args.args[2], {"planner": "planner-key", "executor": "executor-key"})
+            self.assertEqual(dispatch.await_args.kwargs["model_order"], ["custom-model"])
+            self.assertEqual(dispatch.await_args.kwargs["model_settings"]["planner"]["base_url"], "http://planner.test/v1")
+            self.assertEqual(dispatch.await_args.kwargs["model_settings"]["planner"]["model"], "planner-model")
+            self.assertEqual(dispatch.await_args.kwargs["model_settings"]["executor"]["base_url"], "http://executor.test/v1")
+            for key in ("planner-key", "executor-key"):
+                self.assertNotIn(key, json.dumps(dispatch.await_args.kwargs))
+
+    def test_preflight_does_not_load_connection_config(self):
+        with (TemporaryDirectory() as directory,
+              patch.object(terminal, "load_model_settings", side_effect=AssertionError("Unexpected connection load")),
+              patch.object(terminal, "preflight", new_callable=AsyncMock) as preflight):
+            terminal.main(["--config", str(Path(directory) / "missing.yaml"), "--terminal-bench-root", directory,
+                           "--preflight-output", directory])
+            preflight.assert_awaited_once()
+
     def test_coq_offline_build_uses_each_reviewed_image(self):
         with TemporaryDirectory() as directory:
             trial = Path(directory)
@@ -116,18 +145,23 @@ class TerminalBenchmarkTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(root, roots[task_id])
             return root, SimpleNamespace(observation="Local fixture", version=terminal.REVIEWED_TASK_VERSIONS[task_id])
 
-        async def check_matrix(path, rows, dataset, api_key, *, run_one, concurrency, resume):
+        async def check_matrix(path, rows, dataset, api_key, *, run_one, concurrency, resume, protocol_version,
+                               model_settings, model_order):
+            self.assertIsNone(model_settings)
+            self.assertIsNone(model_order)
             self.assertEqual((path, api_key, concurrency, resume), (run_dir, "unused", 1, True))
             self.assertEqual(dataset["selection"], "reviewed_subset")
             self.assertEqual(dataset["canonical_task_count"], 66)
             self.assertEqual(dataset["task_roots"], {key: str(root) for key, root in roots.items()})
             self.assertEqual(list(rows), list(roots))
-            manifest = benchmark.scheduled_manifest(dataset, "terminal-test")
-            self.assertEqual(len(manifest["trials"]), 240)
+            manifest = benchmark.scheduled_manifest(dataset, "terminal-test", protocol_version=protocol_version)
+            self.assertEqual(len(manifest["trials"]), 360)
             for row in rows.values():
-                await run_one(row, None, model_settings={}, max_input_bytes=128, executor_limit=40, planner_limit=0)
+                await run_one(row, None, mode="eo", model_settings={}, max_input_bytes=128, executor_limit=40,
+                              planner_limit=None, return_every=None)
 
         with (patch.object(benchmark, "run_matrix", new=check_matrix),
+              patch.object(benchmark, "requested_protocol", return_value=benchmark.FRAMEWORK_PROTOCOL),
               patch.object(benchmark, "source_version", return_value={}),
               patch.object(terminal, "reviewed_task", side_effect=checked_task),
               patch.object(terminal, "reviewed_wheels") as wheels,

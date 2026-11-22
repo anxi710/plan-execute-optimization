@@ -1,7 +1,11 @@
 planner_generation:
+  model_name: null
+  api_base: null
+  api_key: null
   temperature: null
   token_parameter: max_tokens
   thinking: null
+  reasoning_effort: null
   timeout: 60
   max_retries: 2
   max_concurrency: 10
@@ -10,12 +14,14 @@ planner_generation:
 executor:
   model_name: null
   api_base: null
+  api_key: null
   temperature: 0
   max_completion_tokens: 512
   token_parameter: max_completion_tokens
   request_timeout: 60
   request_max_retries: 2
-  deepseek_thinking: null
+  thinking: null
+  reasoning_effort: null
   send_stop: true
   seed: null
 

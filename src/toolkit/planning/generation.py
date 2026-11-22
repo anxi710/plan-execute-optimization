@@ -4,7 +4,7 @@ import asyncio
 from os import PathLike
 from pathlib import Path
 
-from ..agents.openai_agent import AsyncChatClient
+from ..models.openai import AsyncChatClient
 from ..prompts import extract_plan, render_planner_prompt
 from ..tasks.rows import task_rows_by_id
 from ..utils.config import DEFAULT_CONFIG
@@ -66,12 +66,16 @@ def _resume_plans(output_file, settings_path, settings, selected):
     return saved, [row for task_id, row in selected.items() if task_id not in completed]
 
 
-async def generate_plans(tasks, output_file, *, benchmark, api_base, api_key, model, max_tokens,
+async def generate_plans(tasks, output_file, *, benchmark, max_tokens, model=DEFAULTS["model_name"],
+                         api_base=DEFAULTS["api_base"], api_key=DEFAULTS["api_key"],
                          temperature=DEFAULTS["temperature"], token_parameter=DEFAULTS["token_parameter"],
-                         thinking=DEFAULTS["thinking"], timeout=DEFAULTS["timeout"],
+                         thinking=DEFAULTS["thinking"], reasoning_effort=DEFAULTS["reasoning_effort"],
+                         timeout=DEFAULTS["timeout"],
                          max_retries=DEFAULTS["max_retries"], max_concurrency=DEFAULTS["max_concurrency"],
                          batch_size=DEFAULTS["batch_size"], task_id=None):
     """Generate or resume a plan JSONL from a task JSONL path or task rows."""
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("Planner model_name is required.")
     for name, value, minimum in (
         ("max_tokens", max_tokens, 1), ("max_retries", max_retries, 0),
         ("max_concurrency", max_concurrency, 1), ("batch_size", batch_size, 1),
@@ -102,6 +106,8 @@ async def generate_plans(tasks, output_file, *, benchmark, api_base, api_key, mo
         options["temperature"] = temperature
     if thinking is not None:
         options["extra_body"] = {"thinking": {"type": thinking}}
+    if reasoning_effort is not None:
+        options["reasoning_effort"] = reasoning_effort
     settings = {
         "benchmark": benchmark, "prompt_template": render_planner_prompt(benchmark, "{task}"),
         "input_file": str(input_file) if input_file is not None else None, "task_id": task_id,

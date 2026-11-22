@@ -80,7 +80,7 @@ class SciWorldEnv(BaseEnv):
         return observation, state
 
     def execute_action(self, action):
-        observation, _, done, info = self.env.step(action)
+        observation, _, done, info = self.dispatch(self.env.step, action)
         self._cache_available_actions(info)
         reward = info["score"] / 100.0
         return ActionResult(

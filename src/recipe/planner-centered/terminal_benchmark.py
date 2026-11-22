@@ -28,7 +28,8 @@ from toolkit.prompts import TERMINALBENCH_EXECUTOR_TEMPLATE, render_executor_pro
 from toolkit.rollout.state import State
 from toolkit.rollout.terminalbench import load_terminalbench_trial
 from toolkit.tasks.terminalbench import TerminalBenchTask
-from toolkit.utils.files import write_json
+from toolkit.utils.files import read_yaml_mapping, write_json
+from run import CONFIG_PATH, load_model_settings
 
 
 RELEASE = "v4.1.0"
@@ -59,10 +60,6 @@ TASK_COUNT = 66
 EXECUTOR_LIMIT = 40
 RETURN_EVERY = 4
 MAX_INPUT_BYTES = 131_072
-CONSTRAINTS = [
-    "Use only the public task files and the local /app workspace.",
-    "The isolated task has no network access.",
-]
 COMMAND_TIMEOUT = 30
 OUTPUT_LIMIT = 2_000
 OFFLINE_COMPOSE = Path(__file__).with_name("terminal-compose-offline.yaml")
@@ -283,6 +280,9 @@ def visible_output(text):
 class TerminalWorkspace:
     """Adapt an isolated Harbor environment to the shared per-turn runner."""
 
+    count_dispatched = False
+    last_dispatched = False
+
     def __init__(self, environment, observation, max_steps):
         self.environment = environment
         self.initial_observation = observation
@@ -295,6 +295,7 @@ class TerminalWorkspace:
 
     async def step(self, reply):
         state = self.state
+        self.last_dispatched = False
         state.history.append({"role": "assistant", "content": reply})
         action = None
         dispatched = False
@@ -311,6 +312,7 @@ class TerminalWorkspace:
                 message = "Executor returned the complete task for independent verification."
             else:
                 action = parsed
+                self.last_dispatched = True
                 result = await self.environment.exec(command=action, cwd="/app", timeout_sec=COMMAND_TIMEOUT)
                 dispatched = True
                 valid = result.return_code == 0
@@ -320,7 +322,7 @@ class TerminalWorkspace:
         state.action_trace.append({"action": action, "observation": observation, "valid": valid,
                                    "dispatched": dispatched})
         state.history.append({"role": "user", "content": observation})
-        state.steps += 1
+        state.steps += int(dispatched or not self.count_dispatched)
         if not state.finished and state.steps >= self.max_steps:
             state.finished = True
             state.terminate_reason = "max_steps"
@@ -590,7 +592,7 @@ class TerminalRecipeAgent(BaseAgent):
         options = active["runner_options"]
         env = TerminalWorkspace(environment, instruction, options["executor_limit"])
         active["record"] = await run_framework(
-            env=env, goal=instruction, constraints=CONSTRAINTS,
+            env=env, goal=instruction,
             benchmark="terminalbench", external_verifier=True, **options,
         )
 
@@ -633,10 +635,12 @@ async def run_terminal_trial(root, trials_dir, *, task_key=MUSIC_TASK, **runner_
         record["harbor"]["agent_dockerfile"] = str(trial.paths.trial_dir / f"{prefix}-environment-offline.Dockerfile")
     if task_key == COQ_TASK:
         record["harbor"]["prepared_images"] = {phase: image_id for phase, (_, image_id) in COQ_IMAGES.items()}
-    if imported["reward"] is None and stop["reason"] != "runtime_error":
+    assessable = stop["reason"] != "runtime_error" and not (
+        record.get("protocol_version") and stop["reason"] == "protocol_error"
+    )
+    if imported["reward"] is None and assessable:
         runner_options["save"](record)
         raise HarborVerifierUnavailable(f"See {trial.paths.result_path} for verifier details")
-    assessable = stop["reason"] != "runtime_error"
     record["outcome"] = {
         "reason": stop["reason"],
         "success": imported["success"] if assessable else None,
@@ -779,7 +783,7 @@ async def preflight(root, output, task_key=MUSIC_TASK):
         ]),
         executor=scripted_model([
             f"Action: test -f {public_input} && {absence_check} && test ! -d /solution "
-            "&& test -z \"${TONGJI_API_KEY:-}\" && printf persistent > .planner-preflight",
+            "&& test -z \"${OPENAI_API_KEY:-}\" && printf persistent > .planner-preflight",
             f'Action: test "$(cat .planner-preflight)" = persistent && {write_dummy} '
             '&& printf "workspace retained\\n"',
         ]),
@@ -816,10 +820,11 @@ def selected_task_roots(root, task_key, finance_root, additional_task_roots):
 
 
 async def run_benchmark(root, run_dir, api_key, *, task_key=MUSIC_TASK, finance_root=None,
-                        additional_task_roots=(), resume=False):
-    from benchmark import run_matrix
+                        additional_task_roots=(), resume=False, legacy=False, model_settings=None, model_order=None):
+    from benchmark import requested_protocol, run_matrix
     from run import model_call
 
+    protocol = requested_protocol(run_dir, resume, legacy)
     task_roots = selected_task_roots(root, task_key, finance_root, additional_task_roots)
     rows = {}
     for key, task_root in task_roots.items():
@@ -833,28 +838,33 @@ async def run_benchmark(root, run_dir, api_key, *, task_key=MUSIC_TASK, finance_
     dataset = {
         "name": "Terminal-Bench", "split": "test", "selection": "reviewed_subset",
         "data_version": RELEASE, "source_commit": SOURCE_COMMIT, "canonical_task_count": TASK_COUNT,
-        "data_dir": str(task_roots[task_key]), "tasks": list(rows.values()), "constraints": CONSTRAINTS,
+        "data_dir": str(task_roots[task_key]), "tasks": list(rows.values()),
         "runtime_packages": ["harbor", "openai", "PyYAML"],
         "return_every": RETURN_EVERY, "max_input_bytes": MAX_INPUT_BYTES,
     }
     if len(task_roots) > 1:
         dataset["task_roots"] = {key: str(task_root) for key, task_root in task_roots.items()}
 
-    async def run_one(row, client, *, model_settings, max_input_bytes, executor_limit, planner_limit, **options):
+    async def run_one(row, client, *, model_settings, max_input_bytes, executor_limit, planner_limit,
+                      return_every, mode, protocol_version=None, **options):
         model_options = {"model_settings": model_settings, "max_input_bytes": max_input_bytes}
         key = row["task_id"]
         return await run_terminal_trial(
             task_roots[key], run_dir / "harbor", task_key=key,
-            executor_limit=executor_limit, planner_limit=planner_limit,
-            planner=model_call(client, "planner", planner_limit, **model_options) if planner_limit else None,
-            executor=model_call(client, "executor", executor_limit, **model_options), **options,
+            mode=mode, executor_limit=executor_limit, planner_limit=planner_limit, return_every=return_every,
+            protocol_version=protocol_version,
+            planner=model_call(client, "planner", planner_limit, **model_options) if mode != "eo" else None,
+            executor=model_call(client, "executor", executor_limit if return_every is not None else None,
+                                **model_options), **options,
         )
 
-    await run_matrix(run_dir, rows, dataset, api_key, run_one=run_one, concurrency=1, resume=resume)
+    await run_matrix(run_dir, rows, dataset, api_key, run_one=run_one, concurrency=1, resume=resume, model_order=model_order,
+                     protocol_version=protocol, model_settings=model_settings)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--terminal-bench-root", required=True, type=Path)
     parser.add_argument("--task-id", choices=REVIEWED_TASK_VERSIONS, default=MUSIC_TASK)
     parser.add_argument("--finance-bench-root", type=Path, help="Add the reviewed finance task to a music score matrix.")
@@ -864,6 +874,7 @@ def main(argv=None):
     action.add_argument("--preflight-output", type=Path, help="New output for the scripted native preflight.")
     action.add_argument("--run-dir", type=Path, help="Output for the reviewed real-model score matrix.")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--legacy", action="store_true", help="Run the historical four-framework protocol.")
     args = parser.parse_args(argv)
     if args.preflight_output is not None and (args.finance_bench_root is not None or args.additional_task_root):
         parser.error("Additional task roots require --run-dir")
@@ -876,12 +887,14 @@ def main(argv=None):
             parser.error("--resume requires --run-dir")
         asyncio.run(preflight(args.terminal_bench_root, args.preflight_output.resolve(), args.task_id))
     else:
-        api_key = os.getenv("TONGJI_API_KEY")
-        if not api_key:
-            parser.error("Set TONGJI_API_KEY in the host environment")
+        model_settings, api_key = load_model_settings(args.config)
+        if not all(api_key.values()):
+            parser.error("Set api_key in the recipe config or OPENAI_API_KEY in the host environment")
         asyncio.run(run_benchmark(
             args.terminal_bench_root, args.run_dir.resolve(), api_key, task_key=args.task_id,
-            finance_root=args.finance_bench_root, additional_task_roots=args.additional_task_root, resume=args.resume,
+            finance_root=args.finance_bench_root, additional_task_roots=args.additional_task_root,
+            resume=args.resume, legacy=args.legacy, model_settings=model_settings,
+            model_order=read_yaml_mapping(args.config).get("models"),
         ))
 
 

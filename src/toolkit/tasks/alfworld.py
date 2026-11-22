@@ -31,7 +31,7 @@ class AlfWorldTask:
 
 def _source(path, split):
     import yaml
-    from alfworld.agents.environment import get_environment
+    from alfworld.agents.environment.alfred_tw_env import AlfredTWEnv
 
     os.environ["ALFWORLD_DATA"] = str(path)
     config = yaml.safe_load((path / "base_config.yaml").read_text(encoding="utf-8"))
@@ -39,7 +39,7 @@ def _source(path, split):
         raise ValueError("Only AlfredTWEnv is supported")
     if split == "train" and config["env"].get("domain_randomization"):
         raise ValueError("Disable ALFWorld domain_randomization for matched plan evaluation")
-    return get_environment(config["env"]["type"])(config, train_eval=SPLITS[split])
+    return AlfredTWEnv(config, train_eval=SPLITS[split])
 
 
 def _resolve_gamefile(path, split, task_id, gamefile, available):

@@ -1,4 +1,4 @@
-"""Run the four matched frameworks on the complete ALFWorld test split."""
+"""Run matched ALFWorld frameworks on the complete test split or one task."""
 
 import argparse
 import asyncio
@@ -7,25 +7,27 @@ import os
 import random
 import re
 from collections import Counter
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
 from run import (
-    CONSTRAINTS, EXECUTOR_LIMIT, MODEL_SETTINGS, PLANNER_LIMITS, RETURN_EVERY,
+    CONFIG_PATH, EXECUTOR_LIMIT, MODEL_SETTINGS, RECIPE_CONFIG, load_model_settings,
+    PLANNER_LIMITS, RETURN_EVERY,
     run_matched_trial, runtime_versions, save_trial, source_version, task_goal, utc_now,
 )
-from toolkit.agents.openai_agent import AsyncChatClient
+from toolkit.models.openai import AsyncChatClient
+from toolkit.frameworks import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, PLAN_SCOPES
 from toolkit.rollout.batch import sample_jobs
 from toolkit.tasks.alfworld import AlfWorldRolloutPool, load_alfworld_rows
 from toolkit.tasks.rows import task_rows_by_id
-from toolkit.utils.files import read_json, write_json, write_text_atomic
+from toolkit.utils.files import read_json, read_yaml_mapping, write_json, write_text_atomic
 from toolkit.utils.runfiles import exclusive_run_lock
 
 
-MODELS = ("DeepSeek-V4.1-Flash", "MiniMax-M3.1-Flash", "GLM-5.3-Flash", "Qwen3.8-27B")
+MODELS = tuple(RECIPE_CONFIG["models"])
 SPLIT = "test"
 ALFWORLD_TEST_COUNT = 134
 CONCURRENCY = 4
@@ -45,8 +47,9 @@ PURPOSE = "paired_model_framework_benchmark"
 class PacedClient:
     """Space dispatches locally or across processes sharing a rate file."""
 
-    def __init__(self, client):
+    def __init__(self, client, *, pacer=None):
         self.client = client
+        self.pacer = pacer
         self.lock = asyncio.Lock()
         self.next_request = 0.0
         rate_file = os.getenv(RATE_FILE_ENV)
@@ -79,7 +82,7 @@ class PacedClient:
             write_text_atomic(self.rate_file, f"{self.boot_id} {now + interval}\n")
             return None
 
-    async def complete(self, **kwargs):
+    async def wait_turn(self):
         interval = 60 / REQUESTS_PER_MINUTE
         async with self.lock:
             if self.rate_file is None:
@@ -91,6 +94,9 @@ class PacedClient:
             else:
                 while (deadline := self._reserve_shared(interval)) is not None:
                     await asyncio.sleep(max(0, deadline - monotonic()))
+
+    async def complete(self, **kwargs):
+        await (self.pacer or self).wait_turn()
         return await self.client.complete(**kwargs)
 
 
@@ -103,7 +109,7 @@ def trial_status(record):
             or any(record["events"][-1].get(field) != outcome.get(field)
                    for field in ("reason", "reward", "success"))):
         raise ValueError("Terminal outcome is missing its matching stop and verifier")
-    if outcome["reason"] == "runtime_error" and outcome["reward"] is None:
+    if outcome["reason"] in {"runtime_error", "protocol_error"} and outcome["reward"] is None:
         return "unscored"
     score = outcome["reward"]
     if type(score) not in (int, float) or not math.isfinite(score) or type(outcome["success"]) is not bool:
@@ -113,22 +119,48 @@ def trial_status(record):
 
 def checkpoint_error(record, status):
     if status == "unscored":
-        return next((event["error"] for event in reversed(record["events"]) if event["type"] == "runtime_error"), None)
+        return next((event["error"] for event in reversed(record["events"])
+                     if event["type"] in {"runtime_error", "decision_error"}), None)
     return record.get("error")
 
 
-def scheduled_manifest(dataset, run_id, *, model_order=None):
+def requested_protocol(run_dir, resume, legacy=False):
+    """Pin the protocol for new runs and recover the recorded choice on resume."""
+    if not resume:
+        return None if legacy else FRAMEWORK_PROTOCOL
+    protocol = read_json(run_dir / "manifest.json").get("protocol_version")
+    validate_execution_protocol(protocol)
+    if legacy and protocol is not None:
+        raise ValueError("The saved run uses the two-phase protocol")
+    return protocol
+
+
+def validate_execution_protocol(protocol):
+    if protocol not in {None, FRAMEWORK_PROTOCOL}:
+        raise ValueError(f"Unsupported execution protocol {protocol!r}; historical runs are read-only. "
+                         f"Start a new run with {FRAMEWORK_PROTOCOL}.")
+
+
+def scheduled_manifest(dataset, run_id, *, model_order=None, protocol_version=None, model_settings=None):
+    validate_execution_protocol(protocol_version)
+    use_framework_protocol = protocol_version == FRAMEWORK_PROTOCOL
+    modes = FRAMEWORK_MODES if use_framework_protocol else PLANNER_LIMITS
+    if model_order is not None and not isinstance(model_order, (list, tuple)):
+        raise ValueError("Expected a list of benchmark model names")
     model_order = MODELS if model_order is None else tuple(model_order)
-    if not model_order or len(set(model_order)) != len(model_order) or set(model_order) - set(MODELS):
-        raise ValueError("Select distinct benchmark models from the supported list")
+    if (not model_order or any(not isinstance(model, str) or not model.strip() for model in model_order)
+            or len(set(model_order)) != len(model_order)):
+        raise ValueError("Select distinct nonempty benchmark model names")
+    model_settings = MODEL_SETTINGS if model_settings is None else model_settings
     trace_suffix = ".json.gz" if dataset.get("compress_traces") else ".json"
     models = {
-        model: {role: {**config, "model": model, "max_tokens": MAX_OUTPUT[role]}
-                for role, config in MODEL_SETTINGS.items()}
+        model: {role: {**config, "model": (config["model"] or model) if role == "planner" else model,
+                       "max_tokens": MAX_OUTPUT[role]}
+                for role, config in model_settings.items()}
         for model in model_order
     }
-    return_every = dataset.get("return_every", RETURN_EVERY)
-    if type(return_every) is not int or return_every < 1:
+    return_every = None if use_framework_protocol else dataset.get("return_every", RETURN_EVERY)
+    if not use_framework_protocol and (type(return_every) is not int or return_every < 1):
         raise ValueError("Expected a positive return interval")
     input_limit = dataset.get("max_input_bytes", MAX_INPUT_BYTES)
     if type(input_limit) is not int or input_limit < 1:
@@ -140,42 +172,57 @@ def scheduled_manifest(dataset, run_id, *, model_order=None):
         if (not re.fullmatch(r"[A-Za-z0-9_-]+", str(task_id)) or str(task_id) in budgets
                 or type(limit) is not int or limit < 1):
             raise ValueError(f"Invalid task identity or Executor limit: {task_id}")
-        dynamic = (limit + return_every - 1) // return_every
-        budgets[str(task_id)] = {"executor_limit": limit,
-                                 "planner_limits": {**PLANNER_LIMITS, "pe-d": dynamic, "pc": dynamic}}
+        budget = {"executor_limit": limit}
+        if not use_framework_protocol:
+            dynamic = (limit + return_every - 1) // return_every
+            budget["planner_limits"] = {**PLANNER_LIMITS, "pe-d": dynamic, "pc": dynamic}
+        budgets[str(task_id)] = budget
     trials = {}
     for model in model_order:
-        index = MODELS.index(model) + 1
+        index = MODELS.index(model) + 1 if model in MODELS else len(MODELS) + model_order.index(model) + 1
         for task in dataset["tasks"]:
             task_id = task["task_id"]
-            for mode in PLANNER_LIMITS:
+            for mode in modes:
                 trial_id = f"m{index}-t{task_id}-{mode}"
+                scope = PLAN_SCOPES.get(mode)
                 trials[trial_id] = {
                     "trial_id": trial_id, "model": model, "task_id": task_id, "mode": mode,
                     "workspace_id": f"{run_id}/{trial_id}/attempt-1", "file": f"trials/{trial_id}{trace_suffix}",
                     "status": "queued", "started_at": None, "finished_at": None, "archived_attempts": [],
                     "executor_limit": budgets[str(task_id)]["executor_limit"],
-                    "planner_limit": budgets[str(task_id)]["planner_limits"][mode], "return_every": return_every,
+                    **({"plan_scope": scope, "protocol_version": protocol_version,
+                        "framework_family": mode.removesuffix(f"-{scope[0]}") if scope else mode}
+                       if use_framework_protocol else {
+                        "planner_limit": budgets[str(task_id)]["planner_limits"][mode],
+                        "return_every": return_every,
+                    }),
                 }
     order = list(trials)
-    random.Random(ORDER_SEED).shuffle(order)
-    executor_calls = sum(trial["executor_limit"] for trial in trials.values())
-    planner_calls = sum(trial["planner_limit"] for trial in trials.values())
+    if dataset.get("selection") != "single_task":
+        random.Random(ORDER_SEED).shuffle(order)
     executor_limits = {budget["executor_limit"] for budget in budgets.values()}
     uniform = len(executor_limits) == 1
+    budget = {
+        "executor_limit": next(iter(executor_limits)) if uniform else None,
+        "budgets_by_task": budgets, "max_input_bytes_per_request": input_limit, "automatic_retries": 0,
+        "dispatch_rate_per_minute": REQUESTS_PER_MINUTE, "max_attempts_per_trial": MAX_TRIAL_ATTEMPTS,
+    }
+    if use_framework_protocol:
+        budget["unit"] = "real_environment_dispatch"
+    else:
+        executor_calls = sum(trial["executor_limit"] for trial in trials.values())
+        planner_calls = sum(trial["planner_limit"] for trial in trials.values())
+        budget.update(
+            planner_limits=next(iter(budgets.values()))["planner_limits"] if uniform else None,
+            return_every=return_every, max_requests=executor_calls + planner_calls,
+            max_output_tokens=executor_calls * MAX_OUTPUT["executor"] + planner_calls * MAX_OUTPUT["planner"],
+        )
     return {
         "schema_version": SCHEMA_VERSION, "run_id": run_id, "purpose": PURPOSE,
+        **({"protocol_version": protocol_version, "modes": list(modes)} if use_framework_protocol else {}),
         "status": "running", "started_at": utc_now(), "finished_at": None, "invocations": [],
         "models": models, "model_order": list(model_order), "benchmark": dataset,
-        "budget": {
-            "executor_limit": next(iter(executor_limits)) if uniform else None,
-            "planner_limits": next(iter(budgets.values()))["planner_limits"] if uniform else None,
-            "budgets_by_task": budgets,
-            "return_every": return_every, "max_requests": executor_calls + planner_calls,
-            "max_output_tokens": executor_calls * MAX_OUTPUT["executor"] + planner_calls * MAX_OUTPUT["planner"],
-            "max_input_bytes_per_request": input_limit, "automatic_retries": 0,
-            "dispatch_rate_per_minute": REQUESTS_PER_MINUTE, "max_attempts_per_trial": MAX_TRIAL_ATTEMPTS,
-        },
+        "budget": budget,
         "order_seed": ORDER_SEED, "run_order": order, "trials": trials,
         "records": {trial_id: trial["file"] for trial_id, trial in trials.items()},
         "source": source_version(), "runtime": runtime_versions(dataset.get("runtime_packages")),
@@ -193,7 +240,8 @@ def restore_checkpoint(run_dir, run_id, trial):
         return
     record = read_json(path)
     if (record["run_id"] != run_id or any(record[key] != trial[key] for key in ("trial_id", "mode", "task_id", "model"))
-            or record["attempt"] != len(archives) + 1):
+            or record["attempt"] != len(archives) + 1
+            or any(record.get(key) != trial.get(key) for key in ("protocol_version", "plan_scope", "framework_family"))):
         raise ValueError(f"Saved trial identity differs at {path}")
     trial.update(status=trial_status(record), workspace_id=record["workspace_id"],
                  started_at=record["started_at"], finished_at=record["finished_at"])
@@ -220,7 +268,8 @@ def can_retry_trial(run_dir, trial):
 
 
 async def run_matrix(run_dir, rows, dataset, api_key, *, run_one, concurrency=CONCURRENCY, resume=False,
-                     model_order=None):
+                     model_order=None, protocol_version=None, model_settings=None):
+    validate_execution_protocol(protocol_version)
     if not 1 <= concurrency <= MAX_CONCURRENCY:
         raise ValueError(f"Concurrency must be between 1 and {MAX_CONCURRENCY}")
     if not rows or set(rows) != {task["task_id"] for task in dataset["tasks"]}:
@@ -230,14 +279,17 @@ async def run_matrix(run_dir, rows, dataset, api_key, *, run_one, concurrency=CO
     manifest_path = run_dir / "manifest.json"
     if resume and not manifest_path.is_file():
         raise ValueError("A saved manifest is required for --resume")
+    if resume:
+        validate_execution_protocol(read_json(manifest_path).get("protocol_version"))
     with exclusive_run_lock(run_dir / ".run.lock"):
         manifest = read_json(manifest_path) if resume else None
         run_id = manifest["run_id"] if resume else uuid4().hex
-        expected = scheduled_manifest(dataset, run_id, model_order=model_order)
+        expected = scheduled_manifest(dataset, run_id, model_order=model_order,
+                                      protocol_version=protocol_version, model_settings=model_settings)
         if resume:
             frozen = ("schema_version", "purpose", "models", "model_order", "benchmark", "budget", "source", "runtime",
                       "run_order", "records")
-            if any(manifest.get(key) != expected[key] for key in frozen):
+            if any(manifest.get(key) != expected.get(key) for key in (*frozen, "protocol_version", "modes")):
                 raise ValueError("Saved schedule or runtime differs from the requested resume")
             for trial in expected["trials"].values():
                 restore_checkpoint(run_dir, run_id, trial)
@@ -281,6 +333,8 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
                      workspace_id=f"{manifest['run_id']}/{trial_id}/attempt-{attempt}")
         identity = {"run_id": manifest["run_id"], "task_id": trial["task_id"], "trial_id": trial_id,
                     "arm": trial["mode"], "model": model, "attempt": attempt}
+        if "protocol_version" in trial:
+            identity.update({field: trial[field] for field in ("protocol_version", "plan_scope", "framework_family")})
 
         def checkpoint(record):
             status = trial_status(record) if record.get("outcome") is not None else trial["status"]
@@ -294,8 +348,8 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
                 rows[trial["task_id"]], client, mode=trial["mode"], workspace_id=trial["workspace_id"],
                 model_settings=manifest["models"][model],
                 max_input_bytes=manifest["budget"]["max_input_bytes_per_request"], save=checkpoint,
-                executor_limit=trial["executor_limit"], planner_limit=trial["planner_limit"],
-                return_every=trial["return_every"],
+                executor_limit=trial["executor_limit"], planner_limit=trial.get("planner_limit"),
+                return_every=trial.get("return_every"), protocol_version=trial.get("protocol_version"),
             )
             trial.update(status=trial_status(record), finished_at=record["events"][-1]["timestamp"])
             if error := checkpoint_error(record, trial["status"]):
@@ -310,16 +364,24 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
             checkpoint({**read_json(path), "error": trial["error"]})
             print(f"{trial_id}: {trial['error']}", flush=True)
 
-    transport = MODEL_SETTINGS["executor"]
+    transports = manifest["models"][manifest["model_order"][0]]
     try:
         if pending:
-            async with AsyncChatClient(base_url=transport["base_url"], api_key=api_key, timeout=transport["timeout"],
-                                       max_retries=0, max_concurrency=concurrency) as transport_client:
-                client = transport_client if unpaced else PacedClient(transport_client)
+            async with AsyncExitStack() as stack:
+                clients, pacer = {}, None
+                for role, transport in transports.items():
+                    key = api_key[role] if isinstance(api_key, dict) else api_key
+                    transport_client = await stack.enter_async_context(AsyncChatClient(
+                        base_url=transport["base_url"], api_key=key, timeout=transport["timeout"],
+                        max_retries=0, max_concurrency=concurrency,
+                    ))
+                    clients[role] = transport_client if unpaced else PacedClient(transport_client, pacer=pacer)
+                    if not unpaced and pacer is None:
+                        pacer = clients[role]
 
                 @asynccontextmanager
                 async def open_worker():
-                    yield partial(one_trial, client)
+                    yield partial(one_trial, clients)
 
                 await sample_jobs([trials[trial_id] for trial_id in pending],
                                   open_worker=open_worker, concurrency=concurrency)
@@ -334,47 +396,62 @@ async def run_pending(run_dir, manifest, rows, api_key, run_one, concurrency, re
         write_json(manifest_path, manifest)
 
 
-async def run_benchmark(run_dir, data_dir, gamefiles, api_key, *, concurrency=CONCURRENCY, resume=False):
-    rows = task_rows_by_id(load_alfworld_rows(data_dir, SPLIT, gamefile_map_path=gamefiles))
-    if len(rows) != ALFWORLD_TEST_COUNT or any(not row.get("gamefile") for row in rows.values()):
+async def run_benchmark(run_dir, data_dir, gamefiles, api_key, *, concurrency=CONCURRENCY, resume=False,
+                        split=SPLIT, task_id=None, legacy=False, model_order=None, model_settings=None):
+    protocol = requested_protocol(run_dir, resume, legacy)
+    if task_id is None and split != SPLIT:
+        raise ValueError("Selecting a non-test split requires one --task-id")
+    selection = {"task_id": task_id} if task_id is not None else {}
+    rows = task_rows_by_id(load_alfworld_rows(data_dir, split, gamefile_map_path=gamefiles, **selection))
+    if task_id is None and (len(rows) != ALFWORLD_TEST_COUNT or any(not row.get("gamefile") for row in rows.values())):
         raise ValueError(f"Expected all {ALFWORLD_TEST_COUNT} official test games with verified gamefile assignments")
-    pool = AlfWorldRolloutPool(data_dir, SPLIT, rows.values())
-    if set(pool.gamefiles.values()) != set(pool.source.game_files):
+    if task_id is not None and (list(rows) != [str(task_id)] or not rows[str(task_id)].get("gamefile")):
+        raise ValueError("The selected ALFWorld task requires one verified gamefile")
+    pool = AlfWorldRolloutPool(data_dir, split, rows.values())
+    if task_id is None and set(pool.gamefiles.values()) != set(pool.source.game_files):
         raise ValueError("The assigned gamefiles differ from the complete official test pool")
     tasks = [
         {"task_id": task_id, "task": row["task"], "goal": task_goal(row), "gamefile": row["gamefile"],
          "family": Path(row["gamefile"]).parent.parent.name.split("-", 1)[0]}
         for task_id, row in rows.items()
     ]
-    dataset = {"name": "ALFWorld", "data_version": "json_2.1.1", "split": SPLIT, "selection": "full_split",
-               "canonical_task_file": str(data_dir / f"alfworld_{SPLIT}_tasks.jsonl"), "canonical_task_count": len(tasks),
-               "tasks": tasks, "data_dir": str(data_dir), "gamefile_map": str(gamefiles), "constraints": CONSTRAINTS}
+    dataset = {"name": "ALFWorld", "data_version": "json_2.1.1", "split": split,
+               "selection": "full_split" if task_id is None else "single_task",
+               "canonical_task_file": str(data_dir / f"alfworld_{split}_tasks.jsonl"), "canonical_task_count": len(tasks),
+               "tasks": tasks, "data_dir": str(data_dir), "gamefile_map": str(gamefiles)}
     # Verify each game and its public initial observation before contacting the model service.
     with pool.open_slot() as slot:
         for row in rows.values():
             slot.load_task(row)
     await run_matrix(run_dir, rows, dataset, api_key, run_one=partial(run_matched_trial, pool),
-                     concurrency=concurrency, resume=resume)
+                     concurrency=concurrency, resume=resume, model_order=model_order, model_settings=model_settings,
+                     protocol_version=protocol)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", required=True, type=Path, help="New output directory, or an existing run with --resume.")
     parser.add_argument("--data-dir", required=True, type=Path, help="Local ALFWorld dataset directory.")
-    parser.add_argument("--gamefiles", required=True, type=Path, help="Verified complete ALFWorld test gamefile map.")
+    parser.add_argument("--gamefiles", required=True, type=Path, help="Verified ALFWorld gamefile map for the chosen split.")
+    parser.add_argument("--split", choices=("dev", "test"), default=SPLIT)
+    parser.add_argument("--task-id", help="Run only this task from the selected split.")
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="Recipe YAML with toolkit overrides.")
+    parser.add_argument("--legacy", action="store_true", help="Run the historical four-framework protocol.")
     parser.add_argument("--concurrency", type=int, default=CONCURRENCY, help=f"Simultaneous trials (1–{MAX_CONCURRENCY}).")
     parser.add_argument("--resume", action="store_true", help="Restart unfinished trials or transient API failures once.")
     args = parser.parse_args(argv)
-    api_key = os.getenv("TONGJI_API_KEY")
-    if not api_key:
-        parser.error("Set TONGJI_API_KEY in the environment")
+    model_settings, api_key = load_model_settings(args.config)
+    if not all(api_key.values()):
+        parser.error("Set api_key in the recipe config or OPENAI_API_KEY in the environment")
     if not 1 <= args.concurrency <= MAX_CONCURRENCY:
         parser.error(f"Choose --concurrency between 1 and {MAX_CONCURRENCY}")
     if args.run_dir.exists() != args.resume:
         parser.error("Use a new --run-dir for a fresh run or pass --resume for an existing run")
     try:
         asyncio.run(run_benchmark(args.run_dir.resolve(), args.data_dir.resolve(), args.gamefiles.resolve(), api_key,
-                                  concurrency=args.concurrency, resume=args.resume))
+                                  concurrency=args.concurrency, resume=args.resume, split=args.split,
+                                  task_id=args.task_id, legacy=args.legacy, model_settings=model_settings,
+                                  model_order=read_yaml_mapping(args.config).get("models")))
     except KeyboardInterrupt:
         parser.exit(130, "Benchmark interrupted.\n")
     except Exception as error:
