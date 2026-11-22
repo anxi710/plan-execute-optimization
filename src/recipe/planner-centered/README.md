@@ -8,7 +8,7 @@
 
 当前两个角色经本机 Magpie 的原生透传入口 `http://127.0.0.1:3425/v1/magpie/native/tongji/v1` 调用同济服务，使用裸上游模型名和本机通行值 `api_key: magpie`。该值不是同济密钥，上游凭据由 Magpie 管理。[官方连接说明](https://github.com/yetone/magpie/blob/v0.1.4657/docs/reference.md#connecting-anything-else)说明 native 路径用法。Magpie 的隐私遮蔽仍可能改写正文，不能仅据路径断言逐字节透传。
 
-两个角色均可配置 `thinking` 和 `reasoning_effort`；`null` 表示不发送。通用客户端不按服务商名称转换字段。当前请求 `reasoning_effort: none`，是否真正关闭推理需要核对实际响应与用量；本轮未调用模型。适配器保留返回的 `reasoning`／`reasoning_content`，与正文及框架 `assessment` 分开。
+两个角色均可配置 `thinking` 和 `reasoning_effort`；`null` 表示不发送。通用客户端不按服务商名称转换字段。当前请求 `reasoning_effort: none`；[本轮单任务](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)的 31 次响应均显式报告推理 token 为 0，但不能据此确定旧异常的原因。适配器保留返回的 `reasoning`／`reasoning_content`，与正文及框架 `assessment` 分开。
 
 Toolkit 的 `context_window.max_input_tokens` 控制输入窗口，当前默认为 `null`，不预设容量。历史交互嵌入 prompt 正文；超过已设上限时淘汰最早完整交互，保留当前任务、计划、当前观察及必要工具配对。完整日志保留，没有自动摘要。默认使用明确标记的 UTF-8 保守估计，可注入模型 tokenizer；估计与服务端实际输入用量分开记录。Recipe 不再设独立请求体字节上限。
 
@@ -80,4 +80,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover \
   -s src/recipe/planner-centered/tests -q
 ```
 
-真实后端检查按环境变量显式启用，不发送模型请求。当前协议的模型实机轨迹仍需在授权预算内验收。
+真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[六配置单任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)已生成，PE-D 在线求助未触发，PC-F 协议拒绝保留待审核；进一步模型测试仍须另定范围与预算。

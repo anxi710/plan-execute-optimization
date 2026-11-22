@@ -4,7 +4,7 @@
 
 ## 当前判断
 
-当前准备独立的 `planner-centered-v2` 未训练框架性能测试，尚未启动模型测试或训练。现行协议为 `two-phase-v3`，实现与环境检查通过，提案 v0.6 待审核。旧实验数据保留，当前代码无需兼容。
+`planner-centered-v2` 已完成新协议单任务验收：五配置成功，PC-F 因缺少 `revision_reason` 停止并缺评。轨迹待人工审核；正式评测与训练未启动，提案 v0.6 待审核。
 
 <details id="implementation-context">
 <summary>当前架构、实现与环境检查</summary>
@@ -21,9 +21,9 @@ Planner JSON 中的 `assessment` 表示当前可见状态或阶段判断，替�
 
 ALFWorld 的当前候选菜单已经填入实体参数并按环境状态筛选。研究者决定保留该 action prompt，Planner 不获取该动态目录。其降低接口错误与补充状态信息的作用尚未分离，作为设置条件记录，不在本轮修改。[动作接口边界](DISCUSSION.md#参数实例化状态筛选与-planner-评价)
 
-本轮已将 `plan-test` 对齐主 requirements 的固定版本：ALFWorld 0.4.2、TextWorld 1.7.0、ScienceWorld 1.2.3、OpenAI SDK 3.20.0、PyYAML 6.0.1。ALFWorld 重载及真实动作检查通过，不调用模型。原 Hugging Face 版本冲突已通过将 hub 调整为 1.33.0 修复；TextWorld 官方 wheel 标签格式已修复，程序及数据未变。全环境 `pip check` 与相关包导入复查通过。[依赖与检查边界](experiments/planner-centered-v2/README.md#环境与依赖)
+本轮已将 `plan-test` 对齐主 requirements 的固定版本：ALFWorld 0.4.2、TextWorld 1.7.0、ScienceWorld 1.2.3、OpenAI SDK 3.20.0、PyYAML 6.0.1。ALFWorld 重载及真实动作检查通过；随后从 `main` 完成一次真实模型的六配置单任务验收。原 Hugging Face 版本冲突已通过将 hub 调整为 1.33.0 修复；TextWorld 官方 wheel 标签格式已修复，程序及数据未变。全环境 `pip check` 与相关包导入复查通过。[依赖与检查边界](experiments/planner-centered-v2/README.md#环境与依赖)
 
-Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称。该路径减少普通网关转换，隐私遮蔽配置仍可能改写正文。尚未进行新模型调用，旧的非零推理 token 是否由网关包装造成仍未证实。[透传核查](DISCUSSION.md#模型内置推理与显式思考)
+Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称。该路径减少普通网关转换，隐私遮蔽配置仍可能改写正文。新单任务的 31 次响应均显式报告推理 token 为 0，旧异常是否由网关包装造成仍未证实。[透传核查](DISCUSSION.md#模型内置推理与显式思考)
 
 </details>
 
@@ -51,12 +51,12 @@ Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称�
 
 ## 下一步
 
-先审核新提案与实验设置，再冻结模型、任务、重复次数和预算。PE-D-F 自主求助仍待实机验收。[剩余审核项](DISCUSSION.md#全面审核清单)
+先审核本轮完整轨迹与 PC-F 的计划修订边界，再冻结正式实验设置。PE-D 在线求助仍未在本轮触发。[剩余审核项](DISCUSSION.md#全面审核清单)
 
 <details id="experiment-context">
 <summary>新实验设置与历史证据</summary>
 
-先审核新提案及[新实验设置](experiments/planner-centered-v2/README.md)，在启动模型测试前冻结任务、模型矩阵、重复次数、执行与调度预算。当前仅完成代码、离线检查和无模型环境检查，没有新实验成绩，也未自动沿用旧运行授权。PE-D-F 自主求助仍需在合适任务中验收。[剩余审核项](DISCUSSION.md#全面审核清单)
+先审核新提案及[新实验设置](experiments/planner-centered-v2/README.md)，在启动模型测试前冻结任务、模型矩阵、重复次数、执行与调度预算。研究者随后授权本次单任务六配置实机检查，五组成功，PC-F 协议错误缺评；[完整轨迹与结果](experiments/planner-centered-v2/README.md#本轮单任务实机验收)待审核。PE-D 在线求助未触发，仍需在合适任务中验收。[剩余审核项](DISCUSSION.md#全面审核清单)
 
 旧实验的 ALFWorld 四模型四框架 2,144 个组合已保存原生评分；其他环境的停止决定和既有成绩保留在[旧实验记录](experiments/planner-centered/README.md)，不作为当前待启动运行。
 
@@ -118,11 +118,12 @@ API 内置推理开关、显式思考文本和框架状态判断分开定义；�
 | 项目关注方向 | 2026-11-12 研究者明确要求转向 PROPOSAL.md 中的新提案。 |
 | v0.4 内容审核 | 2026-11-17，研究者在 Codex 对话中同意将 v0.4 列为通过审核。审核对应 2026-11-11 的正文修订，见 `0076b55:PROPOSAL.md`。 |
 | v0.5 内容审核 | 2026-11-18，研究者在 Codex 对话中批准 2026-11-18 修订的 [PROPOSAL.md](PROPOSAL.md)，范围包括四种框架的正文、总览图与四张详图。审核对应未提交的工作区版本。 |
-| 新实验与 v0.6 | 研究者明确要求启动独立的 planner-centered-v2，先测试未经专项训练的框架表现；已授权同步提案、实现与记录。v0.6 正文为本轮工作区修改，待审核。 |
+| 新实验与 v0.6 | 研究者明确要求启动独立的 planner-centered-v2，先测试未经专项训练的框架表现；已授权同步提案、实现与记录。v0.6 正文固定于本地提交 `6f531c6`，待审核。 |
 | 当前兼容边界 | 研究者明确要求删除现有代码面向旧实验的兼容逻辑，保留历史数据；当前运行与导出仅支持 two-phase-v3。 |
 | 环境与上下文 | 采用 ALFWorld 0.4.2 和主 requirements 固定依赖；输入 token 窗口可配置，默认 null，不新增压缩。 |
 | 旧研究方案 | 保存于 archive/pre-v04/RESEARCH.md，保留原题卡、证据和决定；不再作为当前计划。 |
 | 首轮采样诊断 | 研究者授权使用 DeepSeek 开展首轮采样诊断。 |
+| 本轮 v3 单任务验收 | 研究者授权先提交并合并本地 main，再运行一个真实 ALFWorld 任务。六配置各最多 20 步，五组原生成功，PC-F 因缺少修订原因缺评；完整原始轨迹保留，未补跑，待研究者审核。 |
 | 四框架接口验收 | 2026-11-19 研究者授权使用同济 API。真实接口验收完成，[HTML 与源码](experiments/planner-centered/README.md)待研究者审核。 |
 
 此前的分组、编号、归并与审核决定保存在[历史决定](archive/pre-v04/RESEARCH.md#decisions)。固定研究约束与操作规则仍见 [README](README.md) 和 [AGENTS](AGENTS.md)，不复制为另一套状态。
