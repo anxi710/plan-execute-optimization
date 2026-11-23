@@ -64,6 +64,7 @@ const traces = new Map(modes.map(mode => [`fixture-${mode}`, makeTrace(mode)]))
 const index: AlfworldIndex = {
   schemaVersion: 1, runId: 'synthetic-current-protocol', benchmark: 'ALFWorld', selection: 'single_task', split: 'dev',
   protocolVersion: 'two-phase-v3', manifestUrl: 'fixture-manifest.json', models: [model], modes,
+  roleModels: { [model]: { planner: 'fixture-planner', executor: model } },
   tasks: [{ id: '1', goal }], budget: { environmentStepLimit: 20, contextWindow: { max_input_tokens: null } },
   trials: modes.map(mode => ({
     id: `fixture-${mode}`, taskId: '1', model, mode,
@@ -121,8 +122,10 @@ test('reads six current protocols with lazy trajectories, filters, raw calls and
   page.on('request', request => { if (request.url().includes('/alfworld/data/traces/')) traceRequests.push(request.url()) })
   await page.goto(ALFWORLD_URL)
   await expect(page.getByRole('heading', { name: 'ALFWorld 实验结果', exact: true })).toBeVisible()
-  await expect(page.locator('.aw-page-header')).toContainText('1 个任务 × 1 个模型 × 6 种架构 · 5 条有效评分 · 1 条缺评')
+  await expect(page.locator('.aw-page-header')).toContainText('1 个任务 × 1 组角色模型配置 × 6 种架构 · 5 条有效评分 · 1 条缺评')
   await expect(page.getByRole('tab', { name: '结果分析', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.aw-role-models')).toHaveText(`Planner：fixture-planner · Executor：${model}。EO 不调用 Planner。`)
+  await expect(page.locator('body')).not.toContainText('Planner 与 Executor 使用同一基座模型')
   expect(traceRequests).toEqual([])
   await page.getByRole('tab', { name: '轨迹阅读', exact: true }).click()
   await select(page, '选择任务', `1 · ${goal}`, true)

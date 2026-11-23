@@ -74,6 +74,7 @@ function Analysis({ data }: { data: AlfworldIndex }) {
         <p>本次运行包含 {data.tasks.length} 个任务。各架构使用同一组任务进行比较。</p>
         <p className="aw-muted">单次运行只提供各任务、模型和架构的一条最终评分。</p>
       </>}
+      {data.models.map(model => <p className="aw-role-models" key={model}>Planner：{data.roleModels[model].planner} · Executor：{data.roleModels[model].executor}。EO 不调用 Planner。</p>)}
     </section>
     <div className="aw-section-heading"><h2>成功率与配对差异</h2><Select aria-label="分析模型" value={model} onChange={setModel} options={[{ value: 'all', label: '全部模型' }, ...data.models.map(value => ({ value, label: value }))]} /></div>
     <div className="aw-analysis-grid">
@@ -98,7 +99,7 @@ function Analysis({ data }: { data: AlfworldIndex }) {
     <section className="aw-protocol-analysis"><h2>协议终止</h2><p>各架构在 {data.tasks.length} 条轨迹中因协议错误停止的次数。</p><div className="aw-paired"><table><thead><tr><th>模型</th>{data.modes.map(mode => <th key={mode}>{modeName(mode)}</th>)}</tr></thead><tbody>{protocolRows.map(row => <tr key={row.model}><th>{row.model}</th>{row.counts.map((count, i) => <td key={i}>{count}</td>)}</tr>)}</tbody></table></div></section>
     <div className="aw-analysis-grid aw-limitations">
       <section><h2>未成功的轨迹停在哪里？</h2><p className="aw-muted">停止原因只描述运行结束位置，不能独立证明失败机制。</p><ul className="aw-failure-list">{failures.map(([reason, count]) => <li key={reason}><span>{reason}</span><strong>{count}</strong></li>)}</ul></section>
-      <section><h2>比较范围与证据边界</h2><ul><li>ALFWorld 已评分轨迹在原生 won 标志为真时计 1 分，其余计 0 分。</li><li>各架构共用任务与执行额度，Planner 与 Executor 使用同一基座模型。</li>{singleTask ? <li>每种架构保留一个任务实例，用于核对执行协议与轨迹。</li> : <li>统计本次运行的有效评分与缺评，并计入归档尝试的成本。</li>}</ul><details><summary>本轮预算与数据来源</summary><ReadableContent value={data.budget} /><a href={data.manifestUrl}>查看 ALFWorld 运行清单 <ArrowRightOutlined /></a></details></section>
+      <section><h2>比较范围与证据边界</h2><ul><li>ALFWorld 已评分轨迹在原生 won 标志为真时计 1 分，其余计 0 分。</li><li>各架构共用任务与执行额度，按上方角色模型配置运行。</li>{singleTask ? <li>每种架构保留一个任务实例，用于核对执行协议与轨迹。</li> : <li>统计本次运行的有效评分与缺评，并计入归档尝试的成本。</li>}</ul><details><summary>本轮预算与数据来源</summary><ReadableContent value={data.budget} /><a href={data.manifestUrl}>查看 ALFWorld 运行清单 <ArrowRightOutlined /></a></details></section>
     </div>
   </div>;
 }
@@ -131,10 +132,17 @@ function TraceReader({ trial, panel }: { trial: Trial; panel: string }) {
   const shown = data.interactions.filter(item => (role === 'all' || item.role === role || item.kind !== 'call') &&
     (!search || JSON.stringify([item.title, item.content, item.messages, item.output, item.toolCalls, item.phase]).toLowerCase().includes(search.toLowerCase())));
   const modelCalls = data.interactions.filter(item => item.kind === 'call').length;
+  const lastCall = data.interactions.filter(item => item.kind === 'call').slice(-1)[0];
+  const lastError = data.interactions.filter(item => item.kind === 'error').slice(-1)[0];
+  function jump(id: string) {
+    setRole('all'); setSearch('');
+    window.setTimeout(() => document.getElementById(`${prefix}-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }
   return <div className="aw-trace" data-testid="trajectory-reader">
     <header className="aw-trace-heading"><div><h2>{modeName(trial.mode)} <span>{trial.model}</span></h2><p>任务 {trial.taskId} · <span className={trial.score === null ? 'aw-muted' : trial.success ? 'aw-success' : 'aw-failure'}>{verdict(trial)}</span> · {trial.score === null ? '原生缺评' : `原生得分 ${trial.score}`} · {trial.stop}</p></div><Tag>{modelCalls} 次模型调用</Tag></header>
     <p className="aw-protocol">{protocols[trial.mode]}</p>
     <div className="aw-goal"><strong>任务目标</strong><p>{data.goal}</p></div>
+    {trial.attempt !== undefined && <p>第 {trial.attempt} 次尝试 · {trial.error ?? trial.stopReason} {trial.sourceUrl && <a href={trial.sourceUrl}>原始轨迹 JSON</a>} {lastCall && <Button onClick={() => jump(lastCall.id)}>定位最后一次模型调用</Button>} {lastError && <Button onClick={() => jump(lastError.id)}>定位错误</Button>}</p>}
     <nav className="aw-timeline" aria-label="按事件顺序查看模型调用与执行边界"><h3>模型调用与执行边界</h3><p>点击节点定位到对应输入、输出或阶段返回。</p><div className="aw-timeline-nodes">{data.interactions.filter(item => item.marker).map(item => <Button size="small" key={item.id} className={`aw-node aw-symbol-${item.marker}`} title={`${item.title} · 事件 ${item.id}`} aria-label={`${item.title} · 事件 ${item.id}`} onClick={() => { setRole('all'); setSearch(''); window.setTimeout(() => document.getElementById(`${prefix}-${item.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0); }}>{item.marker}</Button>)}</div><div className="aw-timeline-legend">{Object.entries({ P: 'Planner', E: 'Executor', G: '交付指导', D: '委派阶段', R: '检查点或反馈', V: '环境终局' }).map(([marker, label]) => <span key={marker}><b className={`aw-symbol-${marker}`}>{marker}</b>{label}</span>)}</div></nav>
     <div className="aw-reader-tools"><Input aria-label={`${panel} 搜索交互内容`} placeholder="搜索输入、输出或动作" value={search} onChange={event => setSearch(event.target.value)} allowClear /><Select aria-label={`${panel} 交互角色`} value={role} onChange={setRole} options={[{ value: 'all', label: '全部交互' }, { value: 'planner', label: 'Planner 调用与边界' }, { value: 'executor', label: 'Executor 调用与边界' }]} /></div>
     <p className="aw-muted">每次调用完整展示原始 prompt 中全部消息及原始 response，保留消息顺序、role、原文、换行和协议标签。</p>
@@ -148,25 +156,31 @@ function Results({ data }: { data: AlfworldIndex }) {
   const [model, setModel] = useState('all');
   const [mode, setMode] = useState('all');
   const [outcome, setOutcome] = useState('all');
+  const [errorType, setErrorType] = useState('all');
   const [query, setQuery] = useState('');
-  const tab = ['analysis', 'read', 'compare'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'analysis';
+  const tabs = data.review ? ['read', 'compare'] : ['analysis', 'read', 'compare'];
+  const tab = tabs.includes(params.get('tab') ?? '') ? params.get('tab')! : tabs[0];
   const left = data.trials.find(trial => trial.id === params.get('left')) ?? data.trials[0];
   const right = data.trials.find(trial => trial.id === params.get('right')) ?? data.trials.find(trial => trial.taskId === left.taskId && trial.model === left.model && trial.mode !== left.mode) ?? data.trials[1] ?? left;
   function update(values: Record<string, string>) { setParams(previous => { const next = new URLSearchParams(previous); Object.entries(values).forEach(([key, value]) => next.set(key, value)); return next; }, { replace: true }); }
   const goals = useMemo(() => new Map(data.tasks.map(task => [task.id, task.goal])), [data]);
-  const options = data.trials.map(trial => ({ value: trial.id, label: `任务 ${trial.taskId} · ${trial.model} · ${modeName(trial.mode)} · ${verdict(trial)}`, searchText: `${trial.id} ${goals.get(trial.taskId)}` }));
-  const filtered = data.trials.filter(trial => (task === 'all' || trial.taskId === task) && (model === 'all' || trial.model === model) && (mode === 'all' || trial.mode === mode) && (outcome === 'all' || verdict(trial) === outcome) && `${trial.id} ${goals.get(trial.taskId)}`.toLowerCase().includes(query.toLowerCase()));
+  const options = data.trials.map(trial => ({ value: trial.id, label: `任务 ${trial.taskId} · ${trial.model} · ${modeName(trial.mode)} · ${verdict(trial)}${trial.attempt === undefined ? '' : ` · 尝试 ${trial.attempt} · ${trial.error ?? trial.stopReason}`}`, searchText: `${trial.id} ${goals.get(trial.taskId)}` }));
+  const errors = [...new Set(data.trials.map(trial => trial.error ?? trial.stopReason ?? 'unknown'))];
+  const filtered = data.trials.filter(trial => (task === 'all' || trial.taskId === task) && (model === 'all' || trial.model === model) && (mode === 'all' || trial.mode === mode) && (outcome === 'all' || verdict(trial) === outcome) && (errorType === 'all' || (trial.error ?? trial.stopReason ?? 'unknown') === errorType) && `${trial.id} ${goals.get(trial.taskId)}`.toLowerCase().includes(query.toLowerCase()));
   const trajectorySelect = (side: 'left' | 'right') => <label className="aw-trace-select">{side === 'left' ? '左侧轨迹' : '右侧轨迹'}<Select aria-label={side === 'left' ? '左侧轨迹' : '右侧轨迹'} value={side === 'left' ? left.id : right.id} showSearch optionFilterProp="label" options={options} filterOption={(input, option) => `${option?.label} ${option?.searchText}`.toLowerCase().includes(input.toLowerCase())} onChange={value => update({ [side]: value })} /></label>;
   return <main className="alfworld-results">
-    <header className="aw-page-header"><div><h1>ALFWorld 实验结果</h1><p>{data.selection === 'single_task' ? '单任务真实环境验收' : '完整测试集'} · {data.tasks.length} 个任务 × {data.models.length} 个模型 × {data.modes.length} 种架构 · {integer(data.trials.filter(trial => trial.score !== null).length)} 条有效评分{data.trials.some(trial => trial.score === null) && ` · ${data.trials.filter(trial => trial.score === null).length} 条缺评`}</p></div><a href={data.manifestUrl}>查看运行清单 <ArrowRightOutlined /></a></header>
+    <header className="aw-page-header"><div><h1>{data.review ? 'ALFWorld 异常轨迹审查' : 'ALFWorld 实验结果'}</h1><p>{data.review ? `${data.trials.length} 次异常结束的尝试 · ${data.tasks.length} 个任务 · 含已归档的失败尝试` : <>{data.selection === 'single_task' ? '单任务真实环境验收' : '完整测试集'} · {data.tasks.length} 个任务 × {data.models.length} 组角色模型配置 × {data.modes.length} 种架构 · {integer(data.trials.filter(trial => trial.score !== null).length)} 条有效评分{data.trials.some(trial => trial.score === null) && ` · ${data.trials.filter(trial => trial.score === null).length} 条缺评`}</>}</p></div><a href={data.manifestUrl}>查看运行清单 <ArrowRightOutlined /></a></header>
+    {data.review && <><Alert type="info" showIcon title={`${data.review.complete ? '完整运行审查' : '审查快照'}：${data.review.capturedAt}`} description={`已排除 ${data.review.excludedReasons.join('、')} 的 ${data.review.normalAttempts} 次正常结束及 ${data.review.activeAttempts} 次尚未结束的尝试。${data.review.complete ? '全部任务尝试已结束，本页保留完整异常记录及归档失败，不会自动刷新。' : '恢复仍在运行，页面不会自动刷新；这里的异常尝试数不是最终任务失败率。'}`} /><p>{data.models.map(model => `Planner：${data.roleModels[model].planner} · Executor：${data.roleModels[model].executor}`).join('；')}。EO 无 Planner。</p><p className="aw-muted">{errors.map(error => `${error}：${data.trials.filter(trial => (trial.error ?? trial.stopReason ?? 'unknown') === error).length}`).join(' · ')}</p></>}
     <Tabs className="aw-tabs" activeKey={tab} onChange={value => update({ tab: value })} items={[
-      { key: 'analysis', label: '结果分析', children: <Analysis data={data} /> },
+      ...(!data.review ? [{ key: 'analysis', label: '结果分析', children: <Analysis data={data} /> }] : []),
       { key: 'read', label: '轨迹阅读', children: <>
         <div className="aw-section-heading"><h2>查找一条轨迹</h2><span className="aw-muted">{filtered.length} / {data.trials.length} 条</span></div>
         <div className="aw-filters"><Select aria-label="选择任务" value={task} onChange={setTask} showSearch optionFilterProp="label" options={[{ value: 'all', label: '全部任务' }, ...data.tasks.map(task => ({ value: task.id, label: `${task.id} · ${task.goal}` }))]} /><Select aria-label="筛选模型" value={model} onChange={setModel} options={[{ value: 'all', label: '全部模型' }, ...data.models.map(value => ({ value, label: value }))]} /><Select aria-label="筛选架构" value={mode} onChange={setMode} options={[{ value: 'all', label: '全部架构' }, ...data.modes.map(value => ({ value, label: modeName(value) }))]} /><Select aria-label="筛选结果" value={outcome} onChange={setOutcome} options={[{ value: 'all', label: '全部结果' }, { value: '成功', label: '成功' }, { value: '失败', label: '失败' }, ...(data.trials.some(trial => trial.score === null) ? [{ value: '缺评', label: '缺评' }] : [])]} /></div>
         <Input className="aw-search" aria-label="搜索轨迹" placeholder="搜索任务目标或轨迹编号" value={query} onChange={event => setQuery(event.target.value)} allowClear />
+        {data.review && <Select aria-label="筛选错误类型" style={{ minWidth: 320, marginBottom: 16 }} value={errorType} onChange={setErrorType} options={[{ value: 'all', label: '全部错误类型' }, ...errors.map(value => ({ value, label: `${value} (${data.trials.filter(trial => (trial.error ?? trial.stopReason ?? 'unknown') === value).length})` }))]} />}
         <Table size="small" rowKey="id" className="aw-trial-table" dataSource={filtered} rowClassName={trial => trial.id === left.id ? 'aw-selected-row' : ''} pagination={{ pageSize: 8, showSizeChanger: false, hideOnSinglePage: true, showTotal: total => `共 ${total} 条` }} scroll={{ x: 650 }} columns={[
           { title: '任务', dataIndex: 'taskId', width: 65 }, { title: '模型', dataIndex: 'model' }, { title: '架构', dataIndex: 'mode', render: modeName }, { title: '结果', render: (_, trial) => <span className={trial.score === null ? 'aw-muted' : trial.success ? 'aw-success' : 'aw-failure'}>{verdict(trial)}</span> },
+          ...(data.review ? [{ title: '尝试', dataIndex: 'attempt' }, { title: '错误', dataIndex: 'error' }] : []),
           { title: '阅读与对比', render: (_, trial) => <div className="aw-row-actions"><Button type="link" aria-label={`读取轨迹 ${trial.id}`} onClick={() => update({ left: trial.id })}>阅读</Button><Button type="link" aria-label={`对比轨迹 ${trial.id}`} onClick={() => update({ right: trial.id, tab: 'compare' })}>加入对比</Button></div> },
         ]} />
         <div className="aw-reading-actions"><span>正在阅读：{left.id}</span><Button icon={<SwapOutlined />} onClick={() => update({ tab: 'compare', right: (data.trials.find(trial => trial.taskId === left.taskId && trial.model === left.model && trial.mode !== left.mode) ?? right).id })}>对比同任务的其他架构</Button></div>

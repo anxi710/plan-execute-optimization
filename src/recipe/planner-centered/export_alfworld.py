@@ -169,6 +169,8 @@ def export_alfworld(run_dir, output=None, *, standalone=False):
         "schemaVersion": 1, "runId": manifest["run_id"], "benchmark": benchmark["name"],
         "selection": selection, "protocolVersion": manifest["protocol_version"], "split": benchmark.get("split"),
         "models": manifest["model_order"], "modes": manifest_modes(manifest),
+        "roleModels": {model: {role: settings[role]["model"] for role in ("planner", "executor")}
+                       for model, settings in manifest["models"].items()},
         "tasks": [{"id": task["task_id"], "goal": task["goal"], "family": task.get("family", ""),
                    "initial": task.get("task", "")} for task in benchmark["tasks"]],
         "budget": {"environmentStepLimit": budget["executor_limit"],

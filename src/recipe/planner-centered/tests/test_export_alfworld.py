@@ -67,6 +67,7 @@ class AlfworldExportTest(unittest.TestCase):
             self.assertEqual(index["modes"], list(FRAMEWORK_MODES))
             self.assertEqual(index["protocolVersion"], FRAMEWORK_PROTOCOL)
             self.assertEqual(index["manifestUrl"], "manifest.json")
+            self.assertEqual(index["roleModels"], {"model": {"planner": "model", "executor": "model"}})
             self.assertEqual(index["budget"]["environmentStepLimit"], 20)
             self.assertEqual(index["budget"]["contextWindow"], {"max_input_tokens": None})
             for trial in index["trials"]:
@@ -82,6 +83,19 @@ class AlfworldExportTest(unittest.TestCase):
                 self.assertIn("Observation #1", trace["interactions"][0]["title"])
                 self.assertEqual(trial["score"], 0)
             self.assertEqual(read_json(run / "alfworld/data/index.json"), index)
+
+    def test_export_preserves_distinct_role_model_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = self.make_run(directory)
+            manifest = read_json(run / "manifest.json")
+            manifest["models"]["model"]["planner"]["model"] = "Qwen3.8-27B"
+            manifest["models"]["model"]["executor"]["model"] = "DeepSeek-V4.1-Flash"
+            write_json(run / "manifest.json", manifest)
+            index = export_alfworld(run)
+            self.assertEqual(index["roleModels"], {
+                "model": {"planner": "Qwen3.8-27B", "executor": "DeepSeek-V4.1-Flash"},
+            })
+            self.assertTrue(all(trial["model"] == "model" for trial in index["trials"]))
 
     def test_native_tool_calls_and_assessment_are_preserved(self):
         tool = {"id": "call_1", "type": "function", "function": {

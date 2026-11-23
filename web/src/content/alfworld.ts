@@ -3,14 +3,17 @@ export interface Trial {
   stop: string; stopReason?: string | null; error?: string | null; actions: number; plannerCalls: number;
   executorCalls: number; tokens: number; knownTokenCalls: number; totalTokenCalls: number;
   archivedAttempts: number; traceUrl: string;
+  attempt?: number; sourceUrl?: string;
 }
 
 export interface AlfworldIndex {
   schemaVersion: number; runId: string; benchmark: string;
   selection?: string; split?: string; protocolVersion: string; manifestUrl: string;
   models: string[]; modes: string[];
+  roleModels: Record<string, { planner: string; executor: string }>;
   tasks: { id: string; goal: string; family?: string; initial?: string }[];
   budget: Record<string, unknown>; trials: Trial[];
+  review?: { capturedAt: string; excludedReasons: string[]; normalAttempts: number; activeAttempts: number; complete?: boolean };
 }
 
 interface FunctionCall {
