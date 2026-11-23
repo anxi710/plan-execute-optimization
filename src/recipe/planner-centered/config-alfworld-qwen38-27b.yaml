@@ -1,0 +1,17 @@
+models:
+- DeepSeek-V4.1-Flash
+toolkit:
+  context_window:
+    max_input_tokens: null
+  planner_generation:
+    model_name: Qwen3.8-27B
+    api_base: http://127.0.0.1:3425/v1/magpie/native/tongji/v1
+    api_key: magpie
+    thinking: null
+    reasoning_effort: none
+  executor:
+    model_name: DeepSeek-V4.1-Flash
+    api_base: http://127.0.0.1:3425/v1/magpie/native/tongji/v1
+    api_key: magpie
+    thinking: null
+    reasoning_effort: none

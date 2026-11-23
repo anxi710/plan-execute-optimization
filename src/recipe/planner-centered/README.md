@@ -34,9 +34,11 @@ PYTHONPATH=src python src/recipe/planner-centered/benchmark.py \
   --concurrency 4
 ```
 
-默认核对全部 134 个官方 test game。指定 `--split dev --task-id 2` 可只选开发任务。模型顺序来自配置的 `models`。清单冻结实际模型、提示采样、环境版本、上下文设置、真实步预算、顺序 seed 和代码状态。新实验正式矩阵尚未冻结，不因保留旧默认值自动获准运行。
+默认核对全部 134 个官方 test game。指定 `--split dev --task-id 2` 可只选开发任务。模型顺序来自配置的 `models`。清单冻结实际模型、提示采样、环境版本、上下文设置、真实步预算、顺序 seed 和代码状态。当前已授权矩阵为 Qwen Planner／DeepSeek Executor 的 804 条测试，范围与预算见[固定协议](../../../experiments/planner-centered-v2/README.md#完整测试集评测qwen-planner-与-deepseek-executor)；其他配置不因保留默认值自动获准运行。
 
 `--resume` 仅恢复同一当前协议运行中未完成或可重试的外部故障。运行锁阻止并发改写同一目录，完成评分不重跑；每格最多两次尝试，原文件先归档，所有尝试成本计入。清单不匹配时拒绝恢复，不把旧运行重标为新协议。
+
+ALFWorld 矩阵的预检与任务调度共用 `pool.reuse_slots()`，归还后的完整后端供后续任务重载，借出期间独占。并发 4 时最多持有 4 个后端；退出作用域统一关闭。该资源修复限制 `fast_downward` 已删除动态库副本的累积，不改任务初态、模型输入或评分。run02 已完成对 606 条无事件 `OSError` 启动失败与 7 条服务端故障各一次的恢复；首轮 116 条已有评分与 75 条协议缺评均未重跑。最终为 465 条有分、339 条缺评，全部失败尝试与成本保留。[故障证据](../../../experiments/planner-centered-v2/README.md#run02-quota-中断与恢复) · [最终结果与异常审查](../../../experiments/planner-centered-v2/README.md#完整测试结果与最终异常审查)
 
 默认每分钟最多 100 次请求，Planner 和 Executor 共用限速。多个进程可通过同一个 `PLANNER_BENCHMARK_RATE_FILE` 共享派发节奏。`PLANNER_BENCHMARK_UNPACED=1` 仅用于明确选择不限速的环境，实际设置写入清单。网络可用性与凭据检查不代替模型行为验收。
 
@@ -80,4 +82,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover \
   -s src/recipe/planner-centered/tests -q
 ```
 
-真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[六配置单任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)已生成，PE-D 在线求助未触发，PC-F 协议拒绝保留待审核；进一步模型测试仍须另定范围与预算。
+真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[两轮六配置单任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)均已生成，首次 PC-F 协议拒绝与修订后的第二轮成功分别保留待审核。完整矩阵按已冻结设置恢复，其他模型测试另定范围与预算。

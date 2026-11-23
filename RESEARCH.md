@@ -1,10 +1,10 @@
 # 研究工作台
 
-更新：2026-11-23 · 阶段：新实验实现准备，提案 v0.6 待审核 · [研究网站](http://localhost:5173/)
+更新：2026-11-23 · 阶段：未经专项训练的框架测试，提案 v0.6 待审核 · [研究网站](http://localhost:5173/)
 
 ## 当前判断
 
-`planner-centered-v2` 已完成新协议单任务验收：五配置成功，PC-F 因缺少 `revision_reason` 停止并缺评。轨迹待人工审核；正式评测与训练未启动，提案 v0.6 待审核。
+`planner-centered-v2` 的 Qwen Planner／DeepSeek Executor 完整 ALFWorld test 六架构测试（804 条）已于 2026-11-23 15:01:26（北京时间）结束：465 条有有效原生评分，339 条缺评，其中 333 条协议终止、6 条外部故障。配额修复后的恢复按原预算完成，首轮有效评分与协议缺评未重采。最终异常审查页已生成，使用[独立静态入口](http://127.0.0.1:4176/failure-review.html)；大量且不均衡的协议缺评限制架构性能比较。[完整结果与口径](experiments/planner-centered-v2/README.md#完整测试结果与最终异常审查) · 尚未训练，提案 v0.6 待审核。
 
 <details id="implementation-context">
 <summary>当前架构、实现与环境检查</summary>
@@ -19,11 +19,19 @@
 
 Planner JSON 中的 `assessment` 表示当前可见状态或阶段判断，替换易误导的旧字段名，不是隐藏推理的总结，也不裁定任务成功。计划内部继续使用 JSON；标签表示仍待讨论。独立 Hard constraints、字符摘录和 Recent interactions 重复块已移除。观察从 1 连续编号，初始任务目标去重，PE-S 与 PE-D 提示分开，verified 阶段只回送必要已验证信息；尚未引入独立阶段语义 verifier。
 
+实机审阅后，研究者授权明确 PC-F 的 `revision_reason` 同一 JSON 字段要求，并将两角色 prompt 的完整可见历史前移、本轮规则和当前计划状态后置。代码的计划变化判定范围暂不改变；历史是否导致 PE-D-S 减少求助尚无因果证据。已按授权以同任务、同模型和六配置各最多 20 个真实步完成第二轮采样，六组均成功，PE-D 求助未增加；01 原轨迹保留。提示实现现见提交 `0d8dac2`。02 实际运行源码仍以 `1972b47` 和当时保存的补丁为准。[修订与再采样记录](experiments/planner-centered-v2/README.md#本轮单任务实机验收)
+
+研究者已授权一轮完整 ALFWorld test 六架构评测：134 游戏 × 6，共 804 条；确认 Planner 为 `Qwen3.8-27B`、Executor 为 `DeepSeek-V4.1-Flash`。沿用每条 20 个真实步、并发 4、共享 100 请求／分钟，使用独立配置、持久隔离源码副本与新运行目录；用户要求删除刚才的旧完整运行后从零重启，旧轮不混入新成绩；[本轮固定协议](experiments/planner-centered-v2/README.md#完整测试集评测qwen-planner-与-deepseek-executor)在启动前记录，训练未获授权。
+
+完整测试 run02 的首轮配额异常是在复制 32,534,448 字节 `libdownward.so` 时出现 `OSError: [Errno 122] Disk quota exceeded`，对应 `/tmp` 的用户配额。无模型复现确认：原实现每条任务新开 TextWorld 后端，已删除的 native 库仍被进程持有，12 次加载累积 12 份；改为一个显式 `pool.reuse_slots()` 作用域，在 4 个独占 slot 上重载 12 轮共 48 次，库副本恒为 4。作用域结束会关闭后端，但不声称上游已卸载 native 库。修复不改模型、prompt、动作接口、评分或预算。[诊断产物与恢复边界](experiments/planner-centered-v2/README.md#run02-quota-中断与恢复)
+
+首轮 75 条协议缺评已按原始输出逐条核查。已确认包括代码围栏、JSON Schema 外壳、第二次连续求助前的运行器上限、`keep` 与同值计划并存的拒绝，以及 `verified` 状态与阶段切换的结构校验；后者并非独立语义 verifier。本轮恢复保持既有输入和协议，最终协议缺评累计 333 条；首轮机制核查不等于逐条核实了全部最终样本，统计不能直接解释为高层规划能力失败。[首轮分布与边界](experiments/planner-centered-v2/README.md#首轮-75-条协议缺评核查) · [最终异常轨迹查看页](experiments/planner-centered-v2/runs/alfworld-test-qwen38-27b-deepseek-02/failure-review.html)
+
 ALFWorld 的当前候选菜单已经填入实体参数并按环境状态筛选。研究者决定保留该 action prompt，Planner 不获取该动态目录。其降低接口错误与补充状态信息的作用尚未分离，作为设置条件记录，不在本轮修改。[动作接口边界](DISCUSSION.md#参数实例化状态筛选与-planner-评价)
 
 本轮已将 `plan-test` 对齐主 requirements 的固定版本：ALFWorld 0.4.2、TextWorld 1.7.0、ScienceWorld 1.2.3、OpenAI SDK 3.20.0、PyYAML 6.0.1。ALFWorld 重载及真实动作检查通过；随后从 `main` 完成一次真实模型的六配置单任务验收。原 Hugging Face 版本冲突已通过将 hub 调整为 1.33.0 修复；TextWorld 官方 wheel 标签格式已修复，程序及数据未变。全环境 `pip check` 与相关包导入复查通过。[依赖与检查边界](experiments/planner-centered-v2/README.md#环境与依赖)
 
-Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称。该路径减少普通网关转换，隐私遮蔽配置仍可能改写正文。新单任务的 31 次响应均显式报告推理 token 为 0，旧异常是否由网关包装造成仍未证实。[透传核查](DISCUSSION.md#模型内置推理与显式思考)
+Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称。该路径减少普通网关转换，隐私遮蔽配置仍可能改写正文。两轮有用量的响应均显式报告推理 token 为 0，EO 的一次故障请求用量未知，旧异常是否由网关包装造成仍未证实。[透传核查](DISCUSSION.md#模型内置推理与显式思考)
 
 </details>
 
@@ -51,12 +59,12 @@ Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称�
 
 ## 下一步
 
-先审核本轮完整轨迹与 PC-F 的计划修订边界，再冻结正式实验设置。PE-D 在线求助仍未在本轮触发。[剩余审核项](DISCUSSION.md#全面审核清单)
+使用[最终异常审查页](http://127.0.0.1:4176/failure-review.html)审核协议规则与实际输出，重点核对 PC-F 仅 2 / 134 条有分的原因，以及格式容忍、阶段状态和连续求助上限的后续处理。本轮调度、恢复和最终导出均已完成；保留全部 1,417 次尝试，不追加重采、不改写本轮协议。后续改动与实验须在本轮审查后另行确定。[完整结果与成本](experiments/planner-centered-v2/README.md#完整测试结果与最终异常审查) · [剩余审核项](DISCUSSION.md#全面审核清单)
 
 <details id="experiment-context">
 <summary>新实验设置与历史证据</summary>
 
-先审核新提案及[新实验设置](experiments/planner-centered-v2/README.md)，在启动模型测试前冻结任务、模型矩阵、重复次数、执行与调度预算。研究者随后授权本次单任务六配置实机检查，五组成功，PC-F 协议错误缺评；[完整轨迹与结果](experiments/planner-centered-v2/README.md#本轮单任务实机验收)待审核。PE-D 在线求助未触发，仍需在合适任务中验收。[剩余审核项](DISCUSSION.md#全面审核清单)
+两轮单任务六配置验收均已完成：[首次](experiments/planner-centered-v2/README.md#本轮单任务实机验收)五组成功、PC-F 协议缺评，提示修订后的第二轮六组成功，原始轨迹待审核。两轮开发验收均未触发 PE-D 在线求助，该分支需结合完整测试进一步检查。当前完整矩阵的任务、模型、次数与预算已冻结并获授权；提案 v0.6 审核仍待研究者决定。[固定设置与恢复边界](experiments/planner-centered-v2/README.md#完整测试集评测qwen-planner-与-deepseek-executor) · [剩余审核项](DISCUSSION.md#全面审核清单)
 
 旧实验的 ALFWorld 四模型四框架 2,144 个组合已保存原生评分；其他环境的停止决定和既有成绩保留在[旧实验记录](experiments/planner-centered/README.md)，不作为当前待启动运行。
 
@@ -123,6 +131,7 @@ API 内置推理开关、显式思考文本和框架状态判断分开定义；�
 | 环境与上下文 | 采用 ALFWorld 0.4.2 和主 requirements 固定依赖；输入 token 窗口可配置，默认 null，不新增压缩。 |
 | 旧研究方案 | 保存于 archive/pre-v04/RESEARCH.md，保留原题卡、证据和决定；不再作为当前计划。 |
 | 首轮采样诊断 | 研究者授权使用 DeepSeek 开展首轮采样诊断。 |
+| 提示重排与再采样 | 研究者明确授权先明确 revision_reason 的 JSON 字段要求，再将两角色历史前移、指导后置，并重采样同任务六配置。第二轮均 4 步成功，EO 单独恢复一次；原轨迹不改写，修改后的计划理由分支与 PE-D 在线求助仍未在第二轮触发。 |
 | 本轮 v3 单任务验收 | 研究者授权先提交并合并本地 main，再运行一个真实 ALFWorld 任务。六配置各最多 20 步，五组原生成功，PC-F 因缺少修订原因缺评；完整原始轨迹保留，未补跑，待研究者审核。 |
 | 四框架接口验收 | 2026-11-19 研究者授权使用同济 API。真实接口验收完成，[HTML 与源码](experiments/planner-centered/README.md)待研究者审核。 |
 

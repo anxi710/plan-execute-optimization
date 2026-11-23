@@ -11,7 +11,7 @@
 ## 判断与索引
 
 - [同任务的高层战略采样](strategy-sampling/README.md)比较独立采样和提示探索其他路线，并用固定 Executor 检查路线是否在 ALFWorld 中实际发生。
-- [Planner-Centered v2](planner-centered-v2/README.md)记录独立的未训练框架性能测试协议和单任务接口验收：五配置成功、PC-F 协议错误缺评，正式矩阵待冻结。
+- [Planner-Centered v2](planner-centered-v2/README.md)记录独立的未训练框架测试协议、两轮单任务验收和已完成的 Qwen Planner／DeepSeek Executor 完整 test 矩阵：804 条中 465 条有分、339 条缺评。最终异常审查页与全部尝试成本已保留；协议缺评限制架构比较。
 - [旧四框架对照评测](planner-centered/README.md)保留 ALFWorld 完整测试集结果、四套环境的已有评分，以及接口验收与交互轨迹。
 
 比较成功率时同时检查计算和数据预算。候选方法的评价器训练、离线数据和额外调用也计入成本。报告多 seed 的波动，保留负结果和失败轨迹。具体实验要求见 [AGENTS.md](../AGENTS.md#实验)。
