@@ -502,3 +502,18 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(keys[role], "magpie")
         self.assertTrue(all("/" not in model for model in run.RECIPE_CONFIG["models"]))
         self.assertEqual(run.load_context_window(), {"max_input_tokens": None})
+
+    def test_startup_io_failure_retries_once_and_keeps_the_attempt_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trial = {"status": "error", "error": "OSError", "file": "trial.json", "archived_attempts": []}
+            record = {"status": "error", "error": "OSError", "events": [], "outcome": None}
+            write_json(root / trial["file"], record)
+            self.assertTrue(benchmark.can_retry_trial(root, trial))
+            for event in ({"type": "model_call"}, {"type": "tool_event"}):
+                write_json(root / trial["file"], {**record, "events": [event]})
+                self.assertFalse(benchmark.can_retry_trial(root, trial))
+            write_json(root / trial["file"], record)
+            trial["archived_attempts"] = ["attempt-1.json"]
+            write_json(root / "attempt-1.json", record)
+            self.assertFalse(benchmark.can_retry_trial(root, trial))

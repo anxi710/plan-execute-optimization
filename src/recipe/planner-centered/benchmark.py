@@ -210,10 +210,16 @@ def restore_checkpoint(run_dir, run_id, trial):
 
 def can_retry_trial(run_dir, trial):
     unfinished = trial["status"] in ("queued", "running", "interrupted")
-    if trial["status"] == "complete" or not (unfinished or trial.get("error") in TRANSIENT_ERRORS):
+    current = run_dir / trial["file"]
+    startup_io_error = False
+    if trial["status"] == "error" and trial.get("error") == "OSError" and current.is_file():
+        record = read_json(current)
+        startup_io_error = (record.get("status") == "error" and record.get("error") == "OSError"
+                            and record.get("events") == [] and record.get("outcome") is None)
+    if trial["status"] == "complete" or not (unfinished or trial.get("error") in TRANSIENT_ERRORS
+                                           or startup_io_error):
         return False
     paths = [run_dir / path for path in trial["archived_attempts"]]
-    current = run_dir / trial["file"]
     if current.is_file():
         paths.append(current)
     return len(paths) < MAX_TRIAL_ATTEMPTS
@@ -369,13 +375,15 @@ async def run_benchmark(run_dir, data_dir, gamefiles, api_key, *, concurrency=CO
                "selection": "full_split" if task_id is None else "single_task",
                "canonical_task_file": str(data_dir / f"alfworld_{split}_tasks.jsonl"), "canonical_task_count": len(tasks),
                "tasks": tasks, "data_dir": str(data_dir), "gamefile_map": str(gamefiles)}
-    # Verify each game and its public initial observation before contacting the model service.
-    with pool.open_slot() as slot:
-        for row in rows.values():
-            slot.load_task(row)
-    await run_matrix(run_dir, rows, dataset, api_key, run_one=partial(run_matched_trial, pool),
-                     concurrency=concurrency, resume=resume, model_order=model_order, model_settings=model_settings,
-                     protocol_version=protocol, context_window=context_window)
+    # Retain independent native environments instead of loading a new shared library for every trial.
+    with pool.reuse_slots():
+        # Verify each game and its public initial observation before contacting the model service.
+        with pool.open_slot() as slot:
+            for row in rows.values():
+                slot.load_task(row)
+        await run_matrix(run_dir, rows, dataset, api_key, run_one=partial(run_matched_trial, pool),
+                         concurrency=concurrency, resume=resume, model_order=model_order, model_settings=model_settings,
+                         protocol_version=protocol, context_window=context_window)
 
 
 def main(argv=None):

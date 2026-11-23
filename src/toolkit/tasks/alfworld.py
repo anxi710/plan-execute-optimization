@@ -2,7 +2,7 @@
 
 import os
 from collections import Counter, defaultdict
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,6 +125,8 @@ class AlfWorldRolloutPool:
         self.source = _source(path, split)
         available = {Path(gamefile).resolve(): gamefile for gamefile in self.source.game_files}
         self.gamefiles = {}
+        self._slot_stack = None
+        self._idle_slots = []
         assigned = set()
         for task_id, row in self.rows.items():
             resolved = _resolve_gamefile(path, split, task_id, row["gamefile"], available)
@@ -134,12 +136,39 @@ class AlfWorldRolloutPool:
             self.gamefiles[task_id] = available[resolved]
 
     @contextmanager
-    def open_slot(self):
+    def _new_slot(self):
         source = copy(self.source)
         source.game_files = list(self.gamefiles.values())
         source.num_games = len(source.game_files)
         with _open_env(source) as env:
             yield AlfWorldRolloutSlot(env, self.rows, self.gamefiles)
+
+    @contextmanager
+    def reuse_slots(self):
+        """Reuse returned backends and close them together when the scope ends."""
+        if self._slot_stack is not None:
+            raise RuntimeError("ALFWorld slot reuse is already active")
+        with ExitStack() as stack:
+            self._slot_stack = stack
+            try:
+                yield self
+            finally:
+                self._slot_stack = None
+                self._idle_slots.clear()
+
+    @contextmanager
+    def open_slot(self):
+        """Borrow an exclusive slot, reusing it only inside reuse_slots()."""
+        if self._slot_stack is None:
+            with self._new_slot() as slot:
+                yield slot
+            return
+        slot = (self._idle_slots.pop() if self._idle_slots
+                else self._slot_stack.enter_context(self._new_slot()))
+        try:
+            yield slot
+        finally:
+            self._idle_slots.append(slot)
 
 
 def prepare_gamefile_map(path, split, output_path):

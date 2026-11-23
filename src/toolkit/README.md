@@ -87,6 +87,8 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 
 PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。只读终局复核使用以 `Assessment:` 开头的普通文本。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
 
+PC-F 后续返回修改后的 `full_plan` 时，必须在同一 JSON 对象提供非空字符串 `revision_reason`，说明改了什么、为什么改。当前判定涵盖措辞调整和新增细节；首次规划不要求理由。只推进到已有阶段时返回 `current_subplan_id`，省略 `full_plan`。提示和字段说明明确这项条件，判定范围暂不调整。
+
 任务要求只由任务原文提供，不维护或注入独立 `constraints`／`hard_constraints` 字段；`run_framework()` 不接受该参数。
 
 PC 每个非终局轮必须调用一次 Executor，随后根据环境反馈继续或停止。Planner 只维护规划与阶段判断，不能自行宣告任务结束。开放任务由 Executor 通过环境的提交动作交付，再由独立 verifier 验收；在线记录保留待验状态。终局或额度用尽后至多一次只读收尾，不能再派发动作或改写环境裁决。`deliver_plan`、`execute_step` 与 `submit_task` 不再作为模型工具。
@@ -108,6 +110,8 @@ await run_framework(
 ```
 
 Planner 和 Executor 分别维护自己的窗口，权限保持不变。每次请求把保留的完整交互单元写进一个 `user` prompt，淘汰最早的完整单元，不截断单条回复或观察。已淘汰的单元不会因后续固定 prompt 变短而自动返回；Executor 明确引用的证据可临时重新提供给 Planner。PE-D 只把当前必要的原生 `assistant` 工具调用和匹配的 `tool` 结果保留为独立消息，旧工具往返写入 prompt 正文。
+
+两角色的 prompt 正文均按“基础角色说明 → 任务目标 → 完整可见交互历史 → 本轮规则与当前规划状态”组织。Executor 在历史之后、指导之前另列当步 `Available actions`，最后给求助／阶段规则及当前计划；Planner 不接收动作菜单，将本轮规划要求、JSON 字段约定和当前计划状态放在历史之后。当前原生工具配对仍作为合法的 assistant／tool 消息接在 user prompt 后。
 
 任务目标、当前计划或阶段、当前观察、Executor 的当前动作菜单和当前原生工具交接不会被裁掉。窗口同时计入这些固定内容和工具声明。固定内容仍超限时，运行器在派发请求前记录 `context_window_error` 并保留缺评；PC 只读终局复核失败不改写已经取得的环境裁决。原始事件、完整请求与回复持续保存在日志，不做自动摘要。
 
@@ -146,6 +150,10 @@ await session.run(after_step=controller)
 - `toolkit.planning.generation.generate_plans()` 接收任务行或任务 JSONL，用指定 benchmark 的统一模板为每个任务生成一份计划。输出记录回复、用量和实际设置，续跑时跳过已经保存且通过校验的任务。
 - `rollout.batch.run_rollouts()` 为固定计划采样装配任务、模型、环境和状态日志，再调用共享的 `sample_jobs()`。Recipe 提供每条样本的 seed 和结果路径，决定是否续跑。`load_saved_rollout()` 校验记录属于哪条样本，显式重试时调用 `archive_incomplete_rollout()` 保留中断轨迹。
 - `rollout.traces.load_trace()` 校验一份已完成的普通 rollout 轨迹；`load_records()` 只读取 `<task_id>/sample_<id>.json`，按任务、样本和成功状态筛选；`conversation_parts()` 核对每条环境反馈与消息记录。
+
+ALFWorld 的 [`AlfWorldRolloutPool`](tasks/alfworld.py) 提供显式 `with pool.reuse_slots():` 作用域。在其中，`open_slot()` 从空闲池借出完整后端，归还后才允许复用；并发借出的 slot 互相独立。每条任务仍通过 `slot.load_task()` 重载指定游戏并恢复初态，框架会话和历史逐条新建。调用方负责并发上限，预检和正式调度应共用同一作用域；正常或异常退出时统一关闭所有底层环境。作用域外的 `open_slot()` 仍即开即关，不改变其他 Recipe 的生命周期。
+
+该作用域用于限制 TextWorld／`fast_downward` native 库副本增长：当前上游关闭环境后仍保留已删除动态库的进程映射，因此逐条新开后端会持续占用临时文件配额；复用完整后端使副本数受并发 slot 数限制，不全局共享 native 库句柄，也不声称已修复上游卸载。顺序复用、并发隔离、异常清理和域外行为见[测试](tests/test_alfworld_slot_reuse.py)；真实无模型资源检查见[本轮实验记录](../../experiments/planner-centered-v2/README.md#run02-quota-中断与恢复)。
 
 SciWorld 可用 `tasks.sciworld.SciWorldTask.load_tasks()` 和 `envs.sciworld_env.open_sciworld_backend()` 装配。默认使用安装包内的 JAR。历史环境如需指定自己的 JAR，显式传入 `jar_path`。
 
