@@ -66,7 +66,11 @@ def _plan_schema(scope, *, pc, initial):
     required = ["assessment"]
     if pc:
         if scope == "full":
-            fields.update(current_subplan_id=_ID, revision_reason=_TEXT)
+            fields.update(current_subplan_id=_ID, revision_reason={
+                **_TEXT, "description": "On later calls, required in the same JSON object when full_plan changes, "
+                                        "including wording changes or added details. Provide a nonempty reason. "
+                                        "Not required for the initial plan.",
+            })
         fields.update(
             previous_stage_status={
                 "type": "string", "enum": ["verified", "blocked", "replaced"],
@@ -268,7 +272,7 @@ class FrameworkRun:
                 lines.append(f"Planning tool result:\n{event['content']}")
         return ContextRecord(unit["record_id"], "\n\n".join(lines), tuple(refs))
 
-    def _history_context(self, role, blocks, *, required=(), planning=False, actions=None):
+    def _history_context(self, role, blocks, *, trailing_blocks=(), required=(), planning=False, actions=None):
         units = self._history_units()
         records = [self._history_record(unit, planner=role == "planner") for unit in units]
         latest_ref = max(self.observations)
@@ -293,6 +297,7 @@ class FrameworkRun:
             content = "\n\n".join([*blocks, title + "\n" + history])
             if actions is not None:
                 content = render_action_feedback(content, actions)
+            content = "\n\n".join([content, *trailing_blocks])
             return [{"role": "user", "content": content}, *paired]
 
         options = {"tools": [_plan_request(self.scope, self._request_plan).schema]} if planning else {}
@@ -308,44 +313,48 @@ class FrameworkRun:
         return messages, visible
 
     def _executor_context(self, *, planning):
-        blocks = [self.instruction, self._goal()]
+        guidance = []
         if self.pc:
-            blocks.append(EXECUTOR_DELEGATION_PROMPT)
+            guidance.append(EXECUTOR_DELEGATION_PROMPT)
         elif planning:
-            blocks.append(EXECUTOR_PLAN_REQUEST_PROMPT)
+            guidance.append(EXECUTOR_PLAN_REQUEST_PROMPT)
         if self.stage:
-            blocks.append(f"Active sub-plan: {self.stage['stage_objective']}\n"
-                          f"Completion condition: {self.stage['completion_condition']}")
+            guidance.append(f"Active sub-plan: {self.stage['stage_objective']}\n"
+                            f"Completion condition: {self.stage['completion_condition']}")
         elif self.plan:
-            blocks.append(f"Current advisory plan:\n{_numbered_plan(self.plan)}")
+            guidance.append(f"Current advisory plan:\n{_numbered_plan(self.plan)}")
         get_actions = getattr(self.session.env, "get_available_actions", None)
         actions = get_actions() if get_actions else None
-        return self._history_context("executor", blocks, planning=planning, actions=actions)
+        return self._history_context("executor", [self.instruction, self._goal()], trailing_blocks=guidance,
+                                     planning=planning, actions=actions)
 
     def _planner_context(self, prompt, *, reason=None, required=()):
-        body = [FRAMEWORK_PLANNER_PROMPT.format(benchmark=self.benchmark), prompt, self._goal()]
+        guidance = [prompt]
         if self.plan:
-            body.append(f"Current full-plan:\n{_numbered_plan(self.plan)}")
+            guidance.append(f"Current full-plan:\n{_numbered_plan(self.plan)}")
         if self.stage:
             cursor = f" #{self.stage['id']}" if "id" in self.stage else ""
-            body.append(f"Active sub-plan{cursor}: {self.stage['stage_objective']}\n"
-                        f"Completion condition: {self.stage['completion_condition']}")
+            guidance.append(f"Active sub-plan{cursor}: {self.stage['stage_objective']}\n"
+                            f"Completion condition: {self.stage['completion_condition']}")
         if self.revision_reason:
-            body.append(f"Last route revision: {self.revision_reason}")
+            guidance.append(f"Last route revision: {self.revision_reason}")
         if self.verified_stages:
-            body.append("Verified phases:\n" + "\n".join(
+            guidance.append("Verified phases:\n" + "\n".join(
                 f"- {item['stage']['stage_objective']}\n"
                 f"  Completion condition met: {item['stage']['completion_condition']} "
                 f"(observations {', '.join(map(str, item['evidence_refs']))})"
                 for item in self.verified_stages
             ))
         if self.hypotheses:
-            body.append("Unverified hypotheses:\n- " + "\n- ".join(self.hypotheses))
+            guidance.append("Unverified hypotheses:\n- " + "\n- ".join(self.hypotheses))
         if self.remaining_work:
-            body.append("Estimated work remaining:\n- " + "\n- ".join(self.remaining_work))
+            guidance.append("Estimated work remaining:\n- " + "\n- ".join(self.remaining_work))
         if reason:
-            body.append(f"Trigger: {reason}")
-        messages, visible = self._history_context("planner", body, required=required)
+            guidance.append(f"Trigger: {reason}")
+        messages, visible = self._history_context(
+            "planner", [FRAMEWORK_PLANNER_PROMPT.format(benchmark=self.benchmark), self._goal()],
+            trailing_blocks=guidance, required=required,
+        )
         visible.update(ref for item in self.verified_stages for ref in item["evidence_refs"])
         return messages, visible
 

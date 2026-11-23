@@ -134,11 +134,33 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 steps = 0
                 for event in record["events"]:
                     if event["type"] == "model_call":
-                        content = "\n".join(item.get("content") or "" for item in event["messages"])
+                        content = event["messages"][0]["content"]
+                        goal_position = content.index("Task goal:")
                         if event["role"] == "executor":
+                            history_position = content.index("Interaction history:")
+                            menu_position = content.index("Available actions:")
+                            self.assertLess(goal_position, history_position)
+                            self.assertLess(history_position, menu_position)
                             self.assertIn(f"Available actions: {ACTIONS[min(steps, 2)]}", content)
+                            if mode != "eo":
+                                guidance = ("Active sub-plan:" if mode in {"pe-d-s", "pc-f", "pc-s"}
+                                            else "Current advisory plan:")
+                                self.assertLess(menu_position, content.index(guidance))
+                            if mode.startswith("pe-d"):
+                                request_position = content.index("Choose one environment action, or call request_plan")
+                                self.assertLess(menu_position, request_position)
+                                self.assertLess(request_position, content.index(guidance))
                         else:
                             self.assertNotIn("Available actions:", content)
+                            history_position = content.index("Public interaction history:")
+                            self.assertLess(goal_position, history_position)
+                            phase = (INITIAL_SUB_PLAN_GENERATION if INITIAL_SUB_PLAN_GENERATION in content
+                                     else CONTINUOUS_EXECUTION_MONITORING)
+                            self.assertLess(history_position, content.index(phase))
+                            if "Current full-plan:" in content:
+                                self.assertLess(history_position, content.index("Current full-plan:"))
+                            if "Active sub-plan" in content:
+                                self.assertLess(history_position, content.index("Active sub-plan"))
                     elif event["type"] == "tool_event" and event["dispatched"]:
                         steps += 1
                 for call in planner.await_args_list:

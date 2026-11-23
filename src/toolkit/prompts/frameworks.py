@@ -23,8 +23,11 @@ A new fact can inform planning without completing the phase. The runner invokes 
 Do not declare the task finished or request an execution tool; task termination comes from environment feedback."""
 
 PC_FULL_PROMPT = """Initially provide a full_plan of numbered sub-plans and select current_subplan_id.
+The initial plan does not require revision_reason.
 On later calls, preserve the active stage id when its objective and completion condition remain the same.
-Advance by providing another existing id. Only provide full_plan again when you revise the route, with revision_reason."""
+To advance to another existing phase without changing the plan, provide current_subplan_id and omit full_plan.
+If any part of full_plan changes, include the updated full_plan and a nonempty revision_reason string
+in the same JSON object. Explain what changed and why, including wording changes or added details."""
 
 PC_SUB_PROMPT = """Initially provide stage_objective and completion_condition for just the first phase.
 Keep the stage by omitting both fields. Replace it by providing both fields."""
@@ -55,7 +58,6 @@ Choose one environment action addressing this phase. The Planner receives the ac
 
 EXECUTOR_PLAN_REQUEST_PROMPT = """Choose one environment action, or call request_plan to ask the Planner for guidance.
 A planning call must not also contain an Action: line."""
-
 
 PLANNER_JSON_FORMAT = """Return exactly one JSON object matching the following field contract.
 Do not wrap it in Markdown or include an Action line. assessment contains your brief assessment;
