@@ -84,4 +84,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover \
   -s src/recipe/planner-centered/tests -q
 ```
 
-真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[两轮开发任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)及[六目录更新后 test/1 六配置复验](../../../experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验)已生成；各轮协议缺评与原始输出分别保留待审核。完整矩阵已按冻结设置完成，其他模型测试另定范围与预算。
+真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[两轮开发任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)、[六目录更新后 test/1 复验](../../../experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验)和[围栏解析修订后六配置验证](../../../experiments/planner-centered-v2/README.md#完整-json-围栏容忍后的复验)已生成；各轮协议缺评与原始输出分别保留待审核。完整矩阵已按冻结设置完成，其他模型测试另定范围与预算。

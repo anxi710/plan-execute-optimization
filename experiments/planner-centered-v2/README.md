@@ -2,7 +2,7 @@
 
 本实验独立测试 EO、PE-S、PE-D-F/S 和 PC-F/S 在未进行本项目专项训练时的任务表现与运行成本。模型不更新参数。本轮直接报告原生评分、成功、缺评和成本，不评估训练收益，也不要求先回答战略探索或学习机制的问题。
 
-当前状态：使用六目录更新代码的 [test/1 02 六配置单任务复验](#六配置独立目录更新后的复验)已结束：EO、PE-S 和两种 PE-D 成功，两种 PC 因 Markdown 围栏 JSON 被拒绝而缺评。[本轮完整轨迹页](http://127.0.0.1:4178/alfworld.html#/?tab=read&left=m1-t1-pe-d-s)保留实际 prompt 与响应，待研究者审核。此前 01 三组成功、三组协议缺评，原始产物保留。Qwen Planner／DeepSeek Executor 的完整 test 六架构评测 run02 已于 2026-11-23 15:01:26（北京时间）结束：804 条中 465 条有有效原生评分、339 条缺评，[最终结果及异常审查页](#完整测试结果与最终异常审查)保留原样。协议缺评显著限制架构比较，尚未训练。旧实验保留在[原实验目录](../planner-centered/README.md)，不导入本实验样本或评分。
+当前状态：完整外层 JSON 围栏的解析修订见提交 `937ff44`。[test/1 03 六配置验证](#完整-json-围栏容忍后的复验)已全部成功，[新完整轨迹页](http://127.0.0.1:4179/alfworld.html#/?tab=read&left=m1-t1-pc-s)可审核 PC-S 事件 18 的围栏原文及后续执行。此前[02 复验](#六配置独立目录更新后的复验)为四组成功、两种 PC 围栏 JSON 缺评，01 为三组成功、三组协议缺评，原始产物保留。Qwen Planner／DeepSeek Executor 的完整 test 六架构评测 run02 已于 2026-11-23 15:01:26（北京时间）结束：804 条中 465 条有有效原生评分、339 条缺评，[最终结果及异常审查页](#完整测试结果与最终异常审查)保留原样。协议缺评显著限制架构比较，尚未训练。旧实验保留在[原实验目录](../planner-centered/README.md)，不导入本实验样本或评分。
 
 ## 实验标识与范围
 
@@ -124,6 +124,31 @@ EO 的首请求遇到 `InternalServerError`，零环境步、无用量。按同 
 PC-F 在首次监测重发与初始值相同的 `full_plan`，并推进已有阶段 ID 2；后续省略整体计划，仅给已有 ID 3。因为整体计划内容没有变化，本轮没有验证修改计划后填写 `revision_reason` 的分支。PC-F 的成功不能单独归因于字段说明。两种 PE-D 的 Planner 调用仍各为 1、在线求助均为 0；这一次未观察到历史前移带来更多求助，也不能由单次样本排除位置影响。任务、采样随机性、子计划粒度及同时修订的字段说明没有被分离。
 
 ## 最新提示词单任务轨迹验收：test/1
+
+### 完整 JSON 围栏容忍后的复验
+
+研究者于 2026-11-25 授权先分批提交现有改动，再接受完整代码围栏包裹的单个 JSON 对象，随后重新运行单任务。已有工作区分别提交为 `c080a02`（运行器与六目录提示词）、`d01e9f4`（研究与实验记录）、`59faddd`（研究者提供的论文源文件），未推送。新运行使用 `59faddd` 加解析器及相关检查的工作区修改，完整补丁与隔离源码随新 run 保存；此前 01、02 和完整矩阵的原始输出与评分不变。
+
+本轮只改变 Planner 普通回复的 JSON 解码：接受纯 JSON，以及完整三反引号围栏（`json` 标记或无标记）包裹的单个 JSON 对象。原始响应不改写，截断、工具调用、字段、阶段和证据校验保持。提示词、模型和采样不改；未来 format reward 未实现。
+
+验证范围仍是 `test/1`（清洗 bowl 后放入 cabinet）的六配置各一次，每组最多 20 个真实环境步、并发 1、共享 100 请求／分钟；`plan-test` 的 ALFWorld 0.4.2／TextWorld 1.7.0，Planner `Qwen3.8-27B`、Executor `DeepSeek-V4.1-Flash`，温度 0.2／0.6、输出上限 1,536／768、`reasoning_effort: none`、模型采样 seed 未指定、输入窗口 `null`、请求超时 60 秒、自动重试 0。新目录为 `runs/alfworld-test1-qwen38-prompts-03/`，隔离源码为 `runs/.source-alfworld-test1-qwen38-prompts-03/`；不为修正协议错误重采，不从单次结果推断架构性能或格式处理的因果收益。Toolkit 95 项（92 通过、3 后端跳过）与 Recipe 33 项（31 通过、2 跳过）离线检查通过；冻结副本已核对六目录加载和新解码行为。后台服务 `planner-alfworld-test1-prompts-03.service` 于 2026-11-25 19:02:32（北京时间）记录六配置全部结束，正常退出（状态 0）；日志在 `runs/alfworld-test1-qwen38-prompts-03.log`。
+
+| 配置 | 原生奖励 | 真实环境步 | Planner / Executor 请求 | 总 token |
+| --- | --- | --- | --- | --- |
+| EO | 1 | 10 | 0 / 10 | 8,387 |
+| PE-S | 1 | 13 | 1 / 13 | 14,482 |
+| PE-D-F | 1 | 10 | 1 / 10 | 14,501 |
+| PE-D-S | 1 | 11 | 1 / 11 | 15,799 |
+| PC-S | 1 | 10 | 10 / 10 | 23,420 |
+| PC-F | 1 | 13 | 13 / 13 | 36,644 |
+
+共 67 个真实环境步、93 次请求（Planner 26、Executor 67），113,233 token（输入 105,548／输出 7,685）；所有调用均有用量，显式推理 token 为 0。六条均以 `task_finish` 终止，无协议缺评或归档重采。
+
+本次只有 PC-S 的 Planner 事件 18 输出完整围栏 JSON：前三个真实动作之后，它维持定位 bowl 阶段；事件 19 正常应用该判断，下一环境动作是 `go to shelf 1`，最终任务成功。原始响应仍含围栏，证明新解析分支在真实运行中走通。PC-F 本轮没有围栏输出，该配置的围栏处理由离线集成检查覆盖，不能声称本次也有对应实机样例。两种 PE-D 仍各只有一次初始规划、未发起在线求助；弃用目标分支也未触发。单次结果不能估计架构成功率，亦不能将六组的行为变化都归因于解析修订。
+
+实际 93 份请求已按冻结的六目录文案与工具说明核对；原文围栏的接受、规划应用及响应留存见[围栏与请求审计](runs/alfworld-test1-qwen38-prompts-03/fence-acceptance-audit.json)。其他产物为[清单](runs/alfworld-test1-qwen38-prompts-03/manifest.json)、[汇总](runs/alfworld-test1-qwen38-prompts-03/summary.json)、[配置](runs/alfworld-test1-qwen38-prompts-03/config.yaml)、[源码补丁](runs/alfworld-test1-qwen38-prompts-03/source.patch)、[源码来源](runs/alfworld-test1-qwen38-prompts-03/source.json)、[启动脚本](runs/alfworld-test1-qwen38-prompts-03/launch.py)与[完整离线轨迹页](runs/alfworld-test1-qwen38-prompts-03/alfworld.html)。[在线完整轨迹](http://127.0.0.1:4179/alfworld.html#/?tab=read&left=m1-t1-pc-s)由 `planner-alfworld-prompts-review-4179.service` 独立静态服务提供，不经过 Live Server。
+
+已用本机无头 Chrome 逐条核对六配置共 93 次调用，页面展示的全部消息正文与响应和原始 JSON 完全一致，PC-S 围栏原文可见；无脚本错误，检查期间无自动导航或刷新。[浏览器核对记录](runs/alfworld-test1-qwen38-prompts-03/viewer-check.json)保存在同一目录。
 
 ### 六配置独立目录更新后的复验
 

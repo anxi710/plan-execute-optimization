@@ -16,7 +16,7 @@ flowchart LR
   E -.->|Planner-Centered 阶段反馈| P
 ```
 
-提案以 EO、PE-S、PE-D-F/S 和 PC-F/S 比较外部规划的介入时机与阶段委派权限。当前 [planner-centered-v2](experiments/planner-centered-v2/README.md) 已完成单任务接口验收和一轮完整 ALFWorld test 矩阵，六目录提示词更新后的单任务复验也已导出完整轨迹。协议缺评限制架构比较，尚未开展专项训练。各组使用固定 Executor。Planner 优先使用相对小的模型，进入学习阶段后只更新 Planner。跨 Executor 复用保留为后续分析。具体设定见[当前提案](PROPOSAL.md)。
+提案以 EO、PE-S、PE-D-F/S 和 PC-F/S 比较外部规划的介入时机与阶段委派权限。当前 [planner-centered-v2](experiments/planner-centered-v2/README.md) 已完成单任务接口验收和一轮完整 ALFWorld test 矩阵，六目录提示词及围栏解析修订后的单任务复验也已导出完整轨迹。协议缺评限制架构比较，尚未开展专项训练。各组使用固定 Executor。Planner 优先使用相对小的模型，进入学习阶段后只更新 Planner。跨 Executor 复用保留为后续分析。具体设定见[当前提案](PROPOSAL.md)。
 
 不预设长时程特异性。按[研究判断原则](AGENTS.md#研究判断)定位真实困难、核查近邻与简单基线，再选择优化方法。研究问题不受现有训练基座或奖励实现限制；研究者可以按问题需要搭建新框架，已有实现仅作背景与复用参考。
 
