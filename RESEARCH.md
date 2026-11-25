@@ -1,10 +1,16 @@
 # 研究工作台
 
-更新：2026-11-23 · 阶段：未经专项训练的框架测试，提案 v0.6 待审核 · [研究网站](http://localhost:5173/)
+更新：2026-11-25 · 阶段：未经专项训练的框架测试，提案 v0.6 待审核 · [研究网站](http://localhost:5173/)
 
 ## 当前判断
 
 `planner-centered-v2` 的 Qwen Planner／DeepSeek Executor 完整 ALFWorld test 六架构测试（804 条）已于 2026-11-23 15:01:26（北京时间）结束：465 条有有效原生评分，339 条缺评，其中 333 条协议终止、6 条外部故障。配额修复后的恢复按原预算完成，首轮有效评分与协议缺评未重采。最终异常审查页已生成，使用[独立静态入口](http://127.0.0.1:4176/failure-review.html)；大量且不均衡的协议缺评限制架构性能比较。[完整结果与口径](experiments/planner-centered-v2/README.md#完整测试结果与最终异常审查) · 尚未训练，提案 v0.6 待审核。
+
+六目录更新后的 `test/1`（清洗 bowl 后放入 cabinet）02 六配置复验已于 2026-11-25 18:33:12（北京时间）完成：EO、PE-S、PE-D-F、PE-D-S 成功，两种 PC 在第 2 个环境步后的 Planner 回复以 Markdown 围栏包装 JSON，被解析拒绝而缺评。共 49 个真实步、58 次请求和 63,107 token，无重采。实际 58 份请求均核对了对应六目录模块与 Full/sub 文案；两种 PE-D 均未发起在线求助，弃用目标分支未触发。模型仍为 Qwen Planner／DeepSeek Executor，每组最多 20 个真实步、并发 1；只供实际 prompt 与轨迹审核，不据此证明提示收益或架构性能。[本轮完整轨迹页](http://127.0.0.1:4178/alfworld.html#/?tab=read&left=m1-t1-pe-d-s) · [设置与结果](experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验)
+
+PE-D 的 `Thought` 与原生工具调用可以同时出现；已观察的异常是文字表示准备执行，实际却重复请求规划。本地调用链没有强制工具选择或把 Thought 改写成调用。按研究者要求，当前工作区已统一为单轮环境行动／规划求助二选一，并按六种配置、再按 benchmark 保存完整文案，Full/sub 在目录层面分开；不再叠加基础 Action 要求与后置求助例外。当前单任务复验用于检查实际组装，不能据此确认旧行为的原因或架构性能收益。[提示词组织](src/toolkit/README.md#统一提示词) · [接口与解释边界](DISCUSSION.md#当前协议拒绝与规划能力的区分)
+
+研究者接受单个 JSON 对象的外层 Markdown 代码围栏，不要求仅因该包装终止任务。建议仅移除外层围栏，再执行原有字段、阶段和证据校验；运行可解析性与未来格式偏好分开，若引入 format reward，应按保留的原始回复评价。目前解析器尚未放宽，本轮讨论未改代码或重采，训练奖励设计仍未确定，旧协议缺评不回改。[讨论与边界](DISCUSSION.md#当前协议拒绝与规划能力的区分)
 
 <details id="implementation-context">
 <summary>当前架构、实现与环境检查</summary>
@@ -14,6 +20,14 @@
 研究者决定新建 [planner-centered-v2](experiments/planner-centered-v2/README.md)，不从旧实验导入成绩。旧实验的原始请求、评分、报告和源码证据保留；当前代码删除旧控制器、旧字段回退、旧轨迹读取、历史评分回填和跨运行融合。重现旧实验须检出其对应源码，不由当前入口续跑。
 
 当前框架协议为 `two-phase-v3`，实验名称的 v2 与协议版本分别记录。非 EO 先直接生成初始规划；PE-D 由 Executor 原生调用 `request_plan` 按需求助；PC 固定执行一步、读取环境反馈、再由 Planner 监测。任务完成依据环境反馈。研究者接受 PE-D-S 在可直接完成任务时自主行动，工具说明保持原样，不加阶段门控。[运行实现](src/toolkit/README.md#四种运行框架)
+
+当前 Planner 的领域角色直接写入各配置的 benchmark 模块：ALFWorld 为 `household`、SciWorld 为 `scientific`、WebShop 为 `shopping`；Terminal-Bench 保留已有说明。框架按实际 `mode` 与 benchmark 加载唯一模块，不再通过中央模板插值。已完成 run02 使用当时的 benchmark 名称插值，其冻结源码与原始轨迹保留，不回改提示或成绩。[加载入口](src/toolkit/prompts/loader.py) · [目录与字段](src/toolkit/README.md#统一提示词)
+
+初始规划和持续监测的英文阶段标题已从当前 Planner 输入移除，保留各次请求所需的任务说明与格式要求。两阶段控制流不变，阶段标识仅写入轨迹日志；已完成实验仍以当时冻结提示为准。
+
+PC 提示词按 full/sub 分别放在 `pc_f/` 与 `pc_s/`，每份 benchmark 模块各有 initial/monitor 文案，运行器每次选择一份，另附该模块的格式说明与 Schema。Monitor 已按维持、完成推进和弃用重规划整合：有证据表明当前目标无法推进时，Full 重规划剩余目标，Sub 给出新目标；被舍弃的旧目标定义原样记入轨迹，不能视为已完成。已保留研究者对 ALFWorld、PE 与 Executor 文案的手动删减，PC 四份初始／监测文案仅迁移；PC 文案继续待研究者审核。此前 `test/1` 未触发弃用分支。[Full 模板](src/toolkit/prompts/pc_f/alfworld.py) · [Sub 模板](src/toolkit/prompts/pc_s/alfworld.py)
+
+当前工作区已取消终局后的 Planner 自动复核：环境明确终止或真实步数预算耗尽后直接记录结果，中间奖励不单独触发停止。不预设 Executor 输出完成声明，不提取独立声明字段，也不按自然语言关键词判停；任务成败由环境已定义的反馈或提交验收确定。run02 与开发验收原有的收尾调用及成本保留，改动只影响后续运行。[终止边界](src/toolkit/README.md#四种运行框架)
 
 完整交互历史嵌入单次 prompt 正文。Toolkit 提供可配置输入 token 窗口，超限时丢弃最早的完整交互，保留当前任务、有效规划、当前观察和必要工具配对；完整日志不裁剪，没有自动压缩。研究者要求先不设数值，`max_input_tokens` 默认为 `null`。默认计数为明确标记的保守 UTF-8 估计，服务端用量单独记录，不将历次重复输入相加作为窗口占用。[上下文实现](src/toolkit/models/context.py)
 
@@ -59,7 +73,7 @@ Recipe 已配置 Magpie 官方原生透传入口，模型名使用上游名称�
 
 ## 下一步
 
-使用[最终异常审查页](http://127.0.0.1:4176/failure-review.html)审核协议规则与实际输出，重点核对 PC-F 仅 2 / 134 条有分的原因，以及格式容忍、阶段状态和连续求助上限的后续处理。本轮调度、恢复和最终导出均已完成；保留全部 1,417 次尝试，不追加重采、不改写本轮协议。后续改动与实验须在本轮审查后另行确定。[完整结果与成本](experiments/planner-centered-v2/README.md#完整测试结果与最终异常审查) · [剩余审核项](DISCUSSION.md#全面审核清单)
+使用[本轮 test/1 02 完整轨迹页](http://127.0.0.1:4178/alfworld.html#/?tab=read&left=m1-t1-pe-d-s)审核六目录提示词的实际组装、PE-D 的独立行动及 PC 的 JSON 拒绝。采样服务已正常退出；页面由 `planner-alfworld-prompts-review-4178.service` 独立静态服务提供。旧单任务轨迹和完整矩阵全部 1,417 次尝试保持原样；在线求助往返与弃用目标分支本轮未覆盖。后续修改或重采待研究者指示。[设置、结果与原始产物](experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验) · [剩余审核项](DISCUSSION.md#全面审核清单)
 
 <details id="experiment-context">
 <summary>新实验设置与历史证据</summary>

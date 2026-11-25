@@ -2,7 +2,7 @@
 
 本实验独立测试 EO、PE-S、PE-D-F/S 和 PC-F/S 在未进行本项目专项训练时的任务表现与运行成本。模型不更新参数。本轮直接报告原生评分、成功、缺评和成本，不评估训练收益，也不要求先回答战略探索或学习机制的问题。
 
-当前状态：Qwen Planner／DeepSeek Executor 的完整 test 六架构评测 run02 已于 2026-11-23 15:01:26（北京时间）结束。804 条中 465 条有有效原生评分、339 条缺评；原有评分与协议缺评未重采，613 条外部故障按原预算各恢复一次。[最终结果及异常审查页](#完整测试结果与最终异常审查)已就绪。协议缺评显著限制架构比较，结果待审核；尚未训练。旧实验保留在[原实验目录](../planner-centered/README.md)，不导入本实验样本或评分。
+当前状态：使用六目录更新代码的 [test/1 02 六配置单任务复验](#六配置独立目录更新后的复验)已结束：EO、PE-S 和两种 PE-D 成功，两种 PC 因 Markdown 围栏 JSON 被拒绝而缺评。[本轮完整轨迹页](http://127.0.0.1:4178/alfworld.html#/?tab=read&left=m1-t1-pe-d-s)保留实际 prompt 与响应，待研究者审核。此前 01 三组成功、三组协议缺评，原始产物保留。Qwen Planner／DeepSeek Executor 的完整 test 六架构评测 run02 已于 2026-11-23 15:01:26（北京时间）结束：804 条中 465 条有有效原生评分、339 条缺评，[最终结果及异常审查页](#完整测试结果与最终异常审查)保留原样。协议缺评显著限制架构比较，尚未训练。旧实验保留在[原实验目录](../planner-centered/README.md)，不导入本实验样本或评分。
 
 ## 实验标识与范围
 
@@ -30,9 +30,11 @@
 
 任务原文保留其全部要求，不额外维护或注入 Hard constraints。ALFWorld 初始观察从场景中分离任务目标，避免重复。Observation 从 1 开始，后续实际环境反馈连续编号；内部日志事件另记编号，模型调用、求助和本地格式拒绝不占观察号。
 
-任务终止与成败依据环境反馈。预算耗尽、格式错误和外部故障分别记录，不能替代环境成功。PC 终局或预算停止后至多一次只读收尾，不再派发动作；阶段 `verified` 是 Planner 基于可见证据的判断，尚未引入独立阶段语义 verifier。
+任务终止与成败依据环境反馈。当前工作区在环境明确终局或真实步数预算耗尽后直接记录结果，不再调用 Planner 收尾；中间奖励不单独触发停止。不预设 Executor 输出完成声明，也不按自然语言关键词判断终止；ALFWorld 直接采用环境的终止状态、成功标志与奖励。预算耗尽、格式错误和外部故障分别记录，不能替代环境成功；阶段 `verified` 是 Planner 基于可见证据的判断，尚未引入独立阶段语义 verifier。下文已完成的 run02 与开发验收使用当时的收尾策略，其原始请求和成本保留；本次删除只影响后续运行。
 
 ## 输入、规划表示与上下文
+
+当前提示词按六种运行配置分目录：`eo/`、`pe_s/`、`pe_d_f/`、`pe_d_s/`、`pc_f/`、`pc_s/`，各自再按 benchmark 保存完整文案。框架按 `mode` 与 benchmark 加载对应模块，Full/sub 不在同一文件中混放。PE-D 的 Executor 单轮输出一个环境 Action 或原生调用 `request_plan`，Thought 仅解释选择，求助须有具体未解决的规划需求；原有工具时机说明、预算和连续无动作保护不变。其余配置继续逐轮输出环境动作。离线检查完成后，研究者授权单任务 02 复验；此前已完成运行使用当时冻结的提示词。[目录与加载规则](../../src/toolkit/README.md#统一提示词)
 
 当前 Planner 普通输出采用 JSON，使用 `assessment` 表示基于当前可见观察的状态或阶段判断。计划字段按 full／sub 范围给出，PC-F 另维护当前阶段编号。`assessment` 不是服务端隐藏推理的摘要，也不独立决定任务成功。是否把判断与计划放入 `<think>`／`<plan>` 等标签、计划内部是否继续使用 JSON，仍是待讨论的表示问题，本轮不擅自变更。
 
@@ -120,6 +122,60 @@ EO 的首请求遇到 `InternalServerError`，零环境步、无用量。按同 
 实际请求确认两角色均为基础说明、任务目标、完整可见历史、本轮规则和当前计划状态的顺序；只有 Executor 在历史与指导之间附当步动作菜单，观察号均为 1–5。完整历史、工具权限和环境步预算保持原约定。
 
 PC-F 在首次监测重发与初始值相同的 `full_plan`，并推进已有阶段 ID 2；后续省略整体计划，仅给已有 ID 3。因为整体计划内容没有变化，本轮没有验证修改计划后填写 `revision_reason` 的分支。PC-F 的成功不能单独归因于字段说明。两种 PE-D 的 Planner 调用仍各为 1、在线求助均为 0；这一次未观察到历史前移带来更多求助，也不能由单次样本排除位置影响。任务、采样随机性、子计划粒度及同时修订的字段说明没有被分离。
+
+## 最新提示词单任务轨迹验收：test/1
+
+### 六配置独立目录更新后的复验
+
+研究者于 2026-11-25 授权用更新代码再跑同一单任务并展示完整实际请求。运行目录为 `runs/alfworld-test1-qwen38-prompts-02/`，隔离源码为 `runs/.source-alfworld-test1-qwen38-prompts-02/`；保存当前 Git 基线、包括未跟踪提示词模块的工作区补丁和完整提示词副本。旧 01 和完整矩阵产物不覆盖。
+
+本轮只检查六目录路由、Full/sub 文案和行动／求助规则的实际组装与模型行为。沿用 `test/1`（`clean some bowl and put it in cabinet.`）、Planner `Qwen3.8-27B`／Executor `DeepSeek-V4.1-Flash`、`plan-test` 的 ALFWorld 0.4.2，每配置一次、最多 20 个真实步，并发 1、共享 100 请求／分钟。两角色温度 0.2／0.6，输出上限 1,536／768，`reasoning_effort: none`、模型采样 seed 未指定、输入窗口 `null`；请求超时 60 秒、自动重试 0。环境候选接口、协议校验和连续无动作保护不变，不为修正协议错误重采。后台服务 `planner-alfworld-test1-prompts-02.service` 正常退出（状态 0），清单于 2026-11-25 18:33:12（北京时间）记录六配置全部结束；日志在 `runs/alfworld-test1-qwen38-prompts-02.log`。这不是架构性能比较或文案收益的因果实验。
+
+| 配置 | 原生奖励 | 真实环境步 | Planner / Executor 请求 | 总 token | 停止原因 |
+| --- | --- | --- | --- | --- | --- |
+| EO | 1 | 14 | 0 / 14 | 13,538 | `task_finish` |
+| PE-S | 1 | 11 | 1 / 11 | 11,378 | `task_finish` |
+| PE-D-F | 1 | 10 | 1 / 10 | 15,397 | `task_finish` |
+| PE-D-S | 1 | 10 | 1 / 10 | 13,760 | `task_finish` |
+| PC-S | 缺评 | 2 | 3 / 2 | 4,173 | `invalid_planner_json` |
+| PC-F | 缺评 | 2 | 3 / 2 | 4,861 | `invalid_planner_json` |
+
+共 49 个真实环境步、58 次请求（Planner 9、Executor 49），63,107 token（输入 59,477／输出 3,630），所有请求均有用量、显式推理 token 为 0；无归档重采。两种 PC 的事件 13 都以 Markdown 代码围栏包装 JSON，事件 14 被直接 JSON 解析拒绝；这里的缺评不计原生零分。两种 PE-D 的全部 Executor 请求均注册对应 Full/sub 工具，但实际在线求助为 0；本轮没有重复求助，也没有覆盖在线规划往返，不能将单次结果归因于提示修订。弃用目标分支仍未触发。
+
+已逐条核对 58 份实际请求：均采用冻结副本中对应六目录模块，Planner 的 initial/monitor 文案与 Full/sub 范围匹配；任务／完整历史／当前菜单与规划的组装顺序符合当前实现。PE-D 只含一份互斥输出规则，工具描述与对应模块一致；Planner 不接收候选目录，未强制 `tool_choice`。组装核对通过不表示模型全部遵守输出契约。
+
+产物包括[清单](runs/alfworld-test1-qwen38-prompts-02/manifest.json)、[汇总](runs/alfworld-test1-qwen38-prompts-02/summary.json)、[请求组装核对](runs/alfworld-test1-qwen38-prompts-02/prompt-assembly-audit.json)、[源码补丁](runs/alfworld-test1-qwen38-prompts-02/source.patch)、[源码来源](runs/alfworld-test1-qwen38-prompts-02/source.json)、[启动脚本](runs/alfworld-test1-qwen38-prompts-02/launch.py)、[完整提示词目录](runs/alfworld-test1-qwen38-prompts-02/prompts/)与[完整离线轨迹页](runs/alfworld-test1-qwen38-prompts-02/alfworld.html)。[在线轨迹入口](http://127.0.0.1:4178/alfworld.html#/?tab=read&left=m1-t1-pe-d-s)由 `planner-alfworld-prompts-review-4178.service` 独立静态服务提供，不经 Live Server，旧目录不覆盖。
+
+已用本机无头 Chrome 打开实际独立页，依次读取六配置，将 58 次调用全部展示的消息正文和响应与原始轨迹逐字比对；无页面脚本错误，检查期间无自动导航或刷新。[浏览器核对结果](runs/alfworld-test1-qwen38-prompts-02/viewer-check.json)保留在同一运行目录。独立页使用 HashRouter，直达阅读需使用 `alfworld.html#/?tab=read&left=<trial_id>`。
+
+### 首轮单任务采样
+
+研究者授权使用最新工作区提示词运行一个真实 ALFWorld 任务，检查实际输入、规划与执行是否符合预期。本次选用此前讨论的 `test/1`，目标为 `clean some bowl and put it in cabinet.`，六配置各从同一初态独立执行一次。不扩展到完整测试集，不训练，不以该样本估计架构成功率；协议错误与有效评分不为改善结果而重采。
+
+| 项目 | 本次固定设置 |
+| --- | --- |
+| 模型 | Planner `Qwen3.8-27B`／Executor `DeepSeek-V4.1-Flash`；EO 无 Planner，经现有 Magpie 同济原生入口。 |
+| 环境与任务 | `plan-test`，ALFWorld 0.4.2／TextWorld 1.7.0；`runs/data/alfworld-test` 的 canonical 任务与 gamefile 映射，仅加载 `test/1`。 |
+| 架构与预算 | EO、PE-S、PE-D-F、PE-D-S、PC-S、PC-F 各一次，每组最多 20 个真实环境步，并发 1，共享 100 请求／分钟。 |
+| 采样与窗口 | Planner／Executor 温度 0.2／0.6，输出上限 1,536／768 token；`reasoning_effort: none`，模型 seed 未指定，输入窗口 `null`。 |
+| 故障与尝试 | 请求超时 60 秒、请求级自动重试 0；仅可恢复外部故障按既定规则补一次，每条总尝试至多两次，保留原失败与全部成本。 |
+| 提示与控制 | 使用任务类型映射、四份独立 PC 模板和新的 monitor 文案；不注入阶段标题，不做 Planner 终局 review，不提取 `executor_claims`。被舍弃目标按当前实现原文留档。文案本身仍待研究者审核。 |
+| 源码与产物 | Git 基线 `3db2de9` 加本轮工作区补丁，冻结在 `runs/.source-alfworld-test1-qwen38-prompts-01/`；新 run 为 `runs/alfworld-test1-qwen38-prompts-01/`。 |
+
+采样由后台服务 `planner-alfworld-test1-prompts-01.service` 执行，清单于 2026-11-23 18:04:42（北京时间）记录全部结束，后台正常退出。隔离副本已核对与启动时主工作区的 Planner、Executor、运行器和 session 文件一致，后续编辑未进入本次请求。实际保存了[源码补丁](runs/alfworld-test1-qwen38-prompts-01/source.patch)、[配置](runs/alfworld-test1-qwen38-prompts-01/config.yaml)、[启动脚本](runs/alfworld-test1-qwen38-prompts-01/launch.py)、[框架文案](runs/alfworld-test1-qwen38-prompts-01/prompts/frameworks.py)／[ALFWorld 文案](runs/alfworld-test1-qwen38-prompts-01/prompts/alfworld.py)、[清单](runs/alfworld-test1-qwen38-prompts-01/manifest.json)、[汇总](runs/alfworld-test1-qwen38-prompts-01/summary.json)与[完整离线轨迹页](runs/alfworld-test1-qwen38-prompts-01/alfworld.html)；不能用基线提交冒充未提交文案。[六配置轨迹页](http://127.0.0.1:4177/alfworld.html)已通过 `planner-alfworld-prompts-review-4177.service` 的独立静态服务提供，不经过 Live Server 的热刷新。
+
+| 配置 | 原生奖励 | 真实环境步 | Planner / Executor 请求 | 总 token | 停止原因 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| EO | 1 | 14 | 0 / 14 | 12,647 | `task_finish` |
+| PE-S | 1 | 11 | 1 / 11 | 11,207 | `task_finish` |
+| PE-D-F | 缺评 | 0 | 2 / 2 | 4,069 | `consecutive_no_action_rounds` |
+| PE-D-S | 缺评 | 0 | 2 / 2 | 3,444 | `consecutive_no_action_rounds` |
+| PC-S | 1 | 13 | 13 / 13 | 32,689 | `task_finish` |
+| PC-F | 缺评 | 7 | 8 / 7 | 17,705 | `invalid_planner_json` |
+
+六组均为 attempt 1，没有恢复或归档尝试；累计 45 个真实环境步、75 次模型请求（Planner 26／Executor 49），全部返回用量，合计 81,761 token（输入 74,867、输出 6,894）。75 次响应均显式报告推理 token 为 0。缺评维持 null，不当作环境零分。
+
+实际 Planner 请求首句均使用 `household`，没有两种英文阶段标题；新事件不含 `terminal_review`、`read_only` 或 `executor_claims`。PC-S 的 13 个环境动作对应 13 次 Planner 调用，最后一次 Executor 获得环境终局后直接停止。两种 PE-D 均在 Thought 中表示准备检查 countertop，却再次调用 `request_plan`，在尚未派发环境动作时因第二次连续求助停止；PC-F 在第 7 步后的 Planner 回复用 Markdown 代码围栏包裹 JSON，直接 JSON 解析拒绝并缺评。原始响应保留，未为修正这些协议问题重采。所有 `discarded_stages` 记录均为空，本次没有验收弃用目标与重规划的实际分支；该能力仍只有离线覆盖。这一个任务不能支持架构性能或本轮 prompt 收益的比较结论。
 
 ## 完整测试集评测：Qwen Planner 与 DeepSeek Executor
 
@@ -235,6 +291,23 @@ PC-F 在首次监测重发与初始值相同的 `full_plan`，并推进已有阶
 唯一 `missing_revision_reason` 出现在 `m1-t89-pc-f` 的 attempt 2，模型事件 18 后由事件 19 拒绝。该次把整体计划第一阶段完成条件中的 `cup` 改为 `cup (or mug)`，没有同时给出 `revision_reason`；实际请求已明确要求任何整体计划内容变化均须填写该字段。这一条属于当前已说明的字段契约，不沿用最早开发验收中提示缺失的解释。[原始轨迹](runs/alfworld-test-qwen38-27b-deepseek-02/trials/m1-t89-pc-f.json)
 
 全部尝试累计 7,248 次真实环境派发、2,305 次 Planner 请求与 7,446 次 Executor 请求。9,738 / 9,751 次请求返回 token 用量，已报告合计至少 11,267,225 token（输入 10,459,415、输出 807,810），另 13 次用量未知；失败与归档尝试均计入，详见 `summary.json` 的角色成本。结果与运行时源码补丁保留在本地，下一步为研究者审查异常与协议处理，不自动重采或修改本轮成绩。
+
+### 定位 bowl 时的求助与连续调用
+
+研究者指出的 `m1-t1-pe-d-s`（attempt 2）体现了规划援助、执行分支选择与运行器停止规则的叠加。[原始轨迹](runs/alfworld-test-qwen38-27b-deepseek-02/trials/m1-t1-pe-d-s.json) · [定位到审查页](http://127.0.0.1:4176/failure-review.html#/?tab=read&left=m1-t1-pe-d-s-attempt-2)
+
+| 事件 | 实际输出与处理 |
+| --- | --- |
+| 2 | Planner 给出定位 bowl 的目标，完成条件为找到并拿起 bowl。 |
+| 5 | Executor 已在 Thought 中表示先查 countertops，但实际调用 `request_plan`，询问更高效的定位方法。 |
+| 6 | Planner 的 assessment 认可求助合理，同时返回 `keep: true`，没有补充搜索顺序或方法。 |
+| 8 | 工具结果只回送“保留当前指导”及原目标、完成条件；Planner 的 assessment 不回送 Executor。 |
+| 9 | Executor 再次表示先查 countertop，却把这项执行意图写进新的 `request_plan.reason`，没有生成 `Action:`。 |
+| 10–12 | 第二次连续求助触发 `consecutive_no_action_rounds`，再次调用 Planner 前即停止；真实环境步为 0，评分为 null。 |
+
+Planner 判断当前目标仍有必要，并未回答请求中的搜索方法；`keep` 在结构上合规，但需要区分目标有效性与援助是否满足请求。当前子计划工具描述侧重阶段完成、受阻或失效后的规划请求，而该次请求希望在目标不变时获得方法指导。现有交付中 `keep` 只重送原目标与完成条件，assessment 不进入工具返回，也没有独立的补充指导字段；这构成待审的职责与接口边界，不由单例直接决定应采用的新格式。
+
+第二次工具调用没有提出新的求助问题，其参数表达的是准备执行；这是可见执行意图与实际调用分支不一致，不能从 Thought 推定或代执行某个命令。先查 countertops 的想法在首次求助前已有，不能说成 Planner 回复后才形成。初始目标为 locate、完成条件却包括 pick up，粒度也需留意，但本例尚无环境动作，不能归为直接终止原因。该例不证明更具体的 Planner 回复或放宽连续求助限制就会使任务成功，也不单独证明需要 benchmark 专用 Planner 提示词。
 
 ## 测量与结果记录
 

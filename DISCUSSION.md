@@ -26,7 +26,7 @@
 | 编号 | 当前决定与剩余问题 | 边界 |
 | --- | --- | --- |
 | D1 | `assessment` 是模型给出的状态／阶段判断，用于理解计划更新及其证据；不是 thinking 总结、独立 verifier 或成功裁决。计划内部继续 JSON。是否改用标签仍待讨论。 | 当前只改名，无旧字段回退；保留 `Thought:`／`Action:`，不擅自改为 `<think>` 标签。[格式讨论](#实机轨迹审阅上下文与输出格式) |
-| D2 | P10 的重复块、块顺序、Markdown 包裹、未知键和截断等扩展解析策略仍延后。 | 当前不维护旧实验输出兼容，不把解析成功当计划正确。 |
+| D2 | 研究者接受单个 JSON 对象的外层 Markdown 代码围栏，不要求仅因包装终止任务。P10 的重复块、块顺序、未知键和截断等其余扩展解析策略仍延后。 | 当前解析器尚未放宽；建议仅规范化外层围栏，再执行既有字段与阶段校验。原始回复保留，未来是否设置独立 format reward 仍待训练设计。历史协议缺评不回改。 |
 | D3 | Toolkit 输入 token 窗口已实现，默认容量 `null`，超限淘汰最早完整交互，无自动摘要。 | 单次正文嵌入历史，保留当前原生工具交接；完整日志与窗口选择分开。默认计数为保守估计，实际用量单独记录，不累计重复历史 token。[实现](src/toolkit/models/context.py) |
 | D4 | 独立阶段语义 verifier 尚未引入；当前 `verified` 是 Planner 基于可见证据的判断。 | 环境终局与 Terminal 原生验收另有机制，不能混为没有 verifier。 |
 | D5 | 已核查并配置 Magpie native 透传。两轮有用量的真实响应均显式报告推理 token 为 0。 | 原因假设与事实分开；单次结果不能证明旧异常由网关造成。未来训练文本与 loss 的选择不属于当前测试前置。 |
@@ -130,7 +130,7 @@ RAGEN 的核查范围为[原论文 v1，§2.2.2–§2.2.3](https://arxiv.org/htm
 
 实施前的四配置协议要求 Planner 生成覆盖全部剩余工作的计划，解析器检查非空 `<plan>`。旧 PC 向 Executor 下发阶段目标与 `soft_guidance`，整体计划保留在 Planner 状态中。下文按原问题编号保留针对该版本的分析。[实施前协议快照](experiments/planner-centered/protocol-review.html#issues)
 
-这里的 sub-plan 覆盖一个可跨多次环境交互的高层阶段。当前两阶段协议由 Executor 推进 EO 和 PE，PC 固定单步执行后由 Planner 监测；只有 PE-D 的在线求助使用模型工具。动态 PE 和 PC 都可以采用 full 或 sub 范围。Planner 先判断再交付，Executor 按生效的 sub-plan 更新当前指导，完整交互历史跨阶段保留，并采用 P6 的预算与收尾规则。`remaining_work` 暂留，P10 扩展解析细则延后。下列 Q/P 保留形成 v1 时的讨论，其中短窗口与历史摘录方案已由 v2 的完整历史替代。[实施方案](experiments/planner-centered/protocol-design.md) · [运行验收状态](experiments/planner-centered/README.md#两阶段运行协议)
+这里的 sub-plan 覆盖一个可跨多次环境交互的高层阶段。当前两阶段协议由 Executor 推进 EO 和 PE，PC 固定单步执行后由 Planner 监测；只有 PE-D 的在线求助使用模型工具。动态 PE 和 PC 都可以采用 full 或 sub 范围。Planner 先判断再交付，Executor 按生效的 sub-plan 更新当前指导，完整交互历史跨阶段保留，并采用 P6 的预算与终止规则。`remaining_work` 暂留，P10 扩展解析细则延后。下列 Q/P 保留形成 v1 时的讨论，其中短窗口与历史摘录方案已由 v2 的完整历史替代。[实施方案](experiments/planner-centered/protocol-design.md) · [运行验收状态](experiments/planner-centered/README.md#两阶段运行协议)
 
 #### 四个运行问题
 
@@ -147,7 +147,7 @@ RAGEN 的核查范围为[原论文 v1，§2.2.2–§2.2.3](https://arxiv.org/htm
 
 PE-D 中，Executor 通过原生 `request_plan` 调用触发重规划。工具文档说明适用时机、理由参数和返回内容。Executor 提供本次求助的原因，Harness 从已有状态补齐任务、约束、当前计划和有关观察，因而完整的 Planner 请求无须由 Executor 重写。原生调用可能减少格式学习负担，时机判断和证据选择仍需由模型承担，其效果尚待测量。PC 每个真实动作得到环境反馈后都由 Planner 查看，监控可以维持当前阶段；“看过结果”和“实际修改计划”应分别计数。
 
-**Q2　初次规划和重规划应共用什么？** 现行动态指令反复要求剩余整体计划。下一版的 PE-D-F 复核求助理由并决定是否修订剩余路线，PE-D-S 根据触发原因给下一子计划。PC-S 和 PC-F 共用两个明确的阶段。**Initial Sub-Plan Generation** 首次确定当前阶段，PC-S 生成首个子计划，PC-F 生成带编号的完整计划并指定第一个生效的子计划。**Continuous Execution Monitoring** 在每次实际动作得到环境反馈后由 Planner 判断维持、转段或修订。两阶段都先判断再交付，公开输出先给能回查的简短判断依据，计划只写待做工作。旧轨迹中“确认马克杯已放入柜子”属于核对事项，观察即使证实放入，也不足以证明它满足 `cup` 类别。[现行模板](src/toolkit/prompts/frameworks.py) · [旧任务 58](experiments/planner-centered/finish-advice.md)
+**Q2　初次规划和重规划应共用什么？** 现行动态指令反复要求剩余整体计划。下一版的 PE-D-F 复核求助理由并决定是否修订剩余路线，PE-D-S 根据触发原因给下一子计划。PC-S 和 PC-F 共用两个明确的阶段。**Initial Sub-Plan Generation** 首次确定当前阶段，PC-S 生成首个子计划，PC-F 生成带编号的完整计划并指定第一个生效的子计划。**Continuous Execution Monitoring** 在每次实际动作得到环境反馈后由 Planner 判断维持、转段或修订。两阶段都先判断再交付，公开输出先给能回查的简短判断依据，计划只写待做工作。旧轨迹中“确认马克杯已放入柜子”属于核对事项，观察即使证实放入，也不足以证明它满足 `cup` 类别。[当前 PC 模板组织](src/toolkit/README.md#四种运行框架) · [旧任务 58](experiments/planner-centered/finish-advice.md)
 
 **Q3　下一次决策真正要读什么？** 当前动态 Planner 每次收到初始观察、全部累计公开观察和最近一段动作与观察。初始观察在模板和累计事实中重复，最近一段也在两个字段中重复；上一轮实际委派的 `stage_objective` 却未显式送回 Planner。Executor 每步重发完整 `state.history`，包含旧指令、旧动作菜单和整段模型回答。WebShop 当前两处入口都指定 `observation_mode="text"`，模型看到的是商品页面文本，长列表和菜单仍会反复发送。若每步增加约 *b* 个 token，*T* 步下来仅 Executor 历史输入就约为 *bT(T+1)/2*。现有请求字节上限只能拒绝超长输入。这是增长关系，尚无新协议的实测 token 节省值。[Planner 输入](src/toolkit/frameworks/control.py) · [Executor 输入](src/toolkit/rollout/session.py) · [WebShop 配置](src/recipe/planner-centered/webshop_benchmark.py) · [请求字节检查](src/recipe/planner-centered/run.py)
 
@@ -176,7 +176,7 @@ PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划
 
 **P5　Planner 有没有足够证据宣告任务结束？** 核查了四套正式旧运行实际保存的 965 条 PC 轨迹。环境结束前被接受的三次 `finish` 全部来自 ALFWorld，三条原生奖励都为 0。Planner 分别把 `handtowel` 当作 `cloth`、`mug` 当作 `cup`、`butterknife` 当作 `knife`。日志能证明操作了相应物品，无法证明该物品满足目标类别。反过来，在被提示环境已经结束之后，ALFWorld 的 118 条有效收尾都得到 1 分；这取决于调用时点和样本，无法据此估计主动识别终局的能力。WebShop 也有收尾称全部满足、原生分数只有 0.4 的轨迹。P6 确定有原生终止信号时由环境判终，模型意见可保留供分析。三条主动叫停无法估计模型的一般误停率。[结束建议原文、同轮证据、事件编号与评分](experiments/planner-centered/finish-advice.md)
 
-**P6　收尾与预算已确认。** 闭合任务按原生终局结束，随后至多一次只读收尾。开放任务由整任务负责人提交，验收缺席记待验。收尾、常规 Planner 调用、真实环境步、token 与耗时分别记账。采用真实派发的环境交互作主预算，取消独立 Planner 总额度，无动作往返设界以防空转，模型不可见剩余额度。末步先处理已发生的原生终局或验收；PC 对终局动作的最后一次观察可兼作收尾。见 P3、P4、P5、P14。
+**P6　终止与预算已确认。** 闭合任务按原生终局结束。此前允许终局后至多一次 Planner 只读收尾，研究者后续已撤回该要求：当前环境终局或预算停止后直接记录结果，不额外调用 Planner。开放任务按环境已定义的提交接口交付，验收缺席记待验；模型自然语言不参与终局判定，不预设完成声明或关键词检测。常规 Planner 调用、真实环境步、token 与耗时分别记账；已完成实验的原有收尾成本仍保留。采用真实派发的环境交互作主预算，取消独立 Planner 总额度，无动作往返设界以防空转，模型不可见剩余额度。末步先处理已发生的原生终局或验收。见 P3、P4、P5、P14。
 
 **P7　按生效的 sub-plan 刷新 Executor 上下文。** 研究者已确认此边界。新子计划生效或当前阶段的职责被替换时，Executor 从当前目标、硬约束、环境观察、原生动作菜单和可追溯事实重建输入，工作区与真实环境连续。同一阶段内使用短窗口。PC 监控决定维持、PE 的规划工具给出维持意见，或 full-plan 只修订未来阶段时，当前窗口继续使用。PC-F 推进当前阶段编号、PC-S 换目标以及 PE-D-S 启用下一子计划时才开启新窗口。PE-D-F 与 PE-S 若有可辨认的当前执行阶段，同样按该阶段切换；EO 缺少显式 sub-plan 时以整任务为边界。LongHorizon-Harness 按子任务契约刷新上下文，一个契约内也可多步执行。见 P1、P8、P12。[原论文 §2.3](https://arxiv.org/html/2608.01964v1#S2.SS3)
 
@@ -192,7 +192,7 @@ PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划
 
 **P13　`soft_guidance` 是否有独立用途？** 当前日志在 PE-S/PE-D 用它存整份计划，在 PC 用它存可选建议。即便字符串相同，交付职责也不同；对这个字段做统一统计容易误读。待选 **A**：删除独立软提示，PE 的 `plan`、PC 的 `stage_objective` 各只生成、交付和记录一次。**B**：保留可选执行建议，但必须说明与阶段目标、假设、证据均不同的用途，例如两条都满足硬约束的路线之间有一项偏好。建议先选 A；若研究需要控制这种偏好，再引入 B，并承认它改变了 Executor 收到的指导。旧字段继续按历史语义读取。见 P1、P2、P11。
 
-**P14　如何知道 Executor 真的做到了？** 当前 `executor_claims` 取自首个行首 `Action:` 之前的内容，`artifact_refs` 恒为空。PC 单步执行直接返回实际动作与环境观察；阶段验证把这些证据与阶段目标对应，推断标明仍待验证。PE 调用规划工具的理由也仅是请求方的说明。通用协议可先用公开事件与出处，有文件交付的后端再给可读取的版本引用和验收状态。隐藏测试保持隔离。见 P4、P5、P10。
+**P14　如何知道 Executor 真的做到了？** 旧实现曾把首个行首 `Action:` 前的文本另存为 `executor_claims`，它只是原文截取，没有用于判断完成；当前已删除该派生字段。研究者明确不预设 Executor 输出完成声明，不按自然语言关键词判断成败。完整回复留在模型调用日志；PC 单步执行返回实际动作与环境观察，阶段判断依据这些证据。PE 调用规划工具的理由也仅是请求方的说明。有文件交付的后端按已定义的提交接口和原生测试验收，隐藏测试保持隔离。见 P4、P5、P10。
 
 这些选择有四处耦合最强：触发权与阶段范围决定谁还能行动，记忆与字段决定双方能核对什么，格式与验收决定一个建议有多大权限，反馈频率与上下文长度共同决定成本。各组应在同一个反例上检验，再解释框架差异。[当前验收条件](experiments/planner-centered/protocol-design.md#两阶段协议验收)
 
@@ -201,6 +201,12 @@ PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划
 当前工作区使用 `two-phase-v3`。[单次运行状态 `FrameworkRun`](src/toolkit/frameworks/runtime.py) 复用执行会话，显式区分初始规划和后续循环。只有 PE-D 的 Executor 使用 `FunctionTool` 请求在线规划；Planner 通过普通 JSON 交付计划，PC 直接调用 Executor。`tools=[...]` 声明与 `invoke_tool()` 分发共用同一工具定义，不另建工具控制流程。旧数据和既有静态页面原样保留，当前代码只运行及读取 v3；旧控制器、字段回退和旧实验读取／评分回填已删除。重现历史需检出对应源码。[工具绑定](src/toolkit/frameworks/tools.py) · [框架入口](src/toolkit/README.md#四种运行框架) · [请求适配](src/recipe/planner-centered/run.py)
 
 研究者进一步明确了 PE-D 与 PC 的两阶段控制流：先生成初始规划，再进入持续执行与监测。两种框架在第二阶段采用不同的调用机制：PE-D 的 Executor 按需通过原生工具调用请求规划；PC 每个非终局轮固定调用 Executor 一次，不需要模型工具调用。
+
+研究者明确 Planner 角色说明使用任务类型，不直接填 benchmark 名称：ALFWorld 为 `household`、SciWorld 为 `scientific`、WebShop 为 `shopping`。当前领域说明直接写在各配置的 benchmark 模块中；Terminal-Bench 保留已有说明。已完成 run02 的原始提示和成绩保留，不将后续文案追溯应用到历史运行。[提示词组织与加载](src/toolkit/README.md#统一提示词)
+
+研究者删除初始规划与持续监测的英文阶段标题，不再将它们提供给 Planner。初始／后续任务说明和两阶段调用顺序继续由运行器选择，阶段信息仅记在日志 `planner_phase` 的 `initial_planning`／`execution_monitoring` 中。后续又取消终局后的自动 Planner review，当前不再记录新的 `terminal_review`；旧轨迹中的收尾标记与成本保留。这些改动同步清理相关提示与测试依赖，历史轨迹与页面不回改。
+
+PC 的提示组织保留 full/sub × initial/monitor 四份独立文案。Full 与 Sub 分别位于 `prompts/pc_f/<benchmark>.py` 和 `prompts/pc_s/<benchmark>.py`，模块内使用相同的 `PLANNER_INITIAL_PROMPT`／`PLANNER_MONITOR_PROMPT` 字段。监测提示按反馈判断、阶段处理与输出字段组织，不再字面叠加两套规则。研究者明确：若证据表明当前目标无法推进，可以舍弃并重新规划；Full 重规划剩余目标，Sub 直接给出新目标。Full 同时区分阶段是否改变与整体计划是否修订，保持当前阶段也可修改未来计划。被移除或改写的未完成目标原文留在 `discarded_stages`，当前阶段的状态与证据留在 `stage_result`，不将舍弃记为完成，也不把后续目标都标成受阻。运行器从所选模块读取角色和格式要求，再加入历史、当前状态和动态 JSON 字段契约。保留研究者已经完成的非 PC 文案删减；PC 四份文案仅迁移，继续待审，本轮目录调整未重采实验。[Full 模板](src/toolkit/prompts/pc_f/alfworld.py) · [Sub 模板](src/toolkit/prompts/pc_s/alfworld.py) · [记录边界](src/toolkit/README.md#四种运行框架)
 
 | 框架 | 第一阶段 | 第二阶段的控制流 |
 | --- | --- | --- |
@@ -211,9 +217,9 @@ PC-S 的监控输入保留全部已验证子计划及其依据、当前子计划
 
 PE-D 收到 `request_plan` 才进入在线规划分支，返回结果与原调用 ID 配对；PC 按固定循环直接推进 Planner 与 Executor。工具对象只负责实际需要的声明与 handler 绑定。消息配对、参数和证据验证、持久环境、上下文、实际动作预算、日志与终局判定继续由运行会话承担。`deliver_plan`、`execute_step` 与 `submit_task` 不再作为模型工具。JSON 交付只增加完成此流程必需的对象解码，P10 的扩展解析策略仍延后。
 
-PC 每个非终局轮必须执行一次 Executor，任务终止与成败依据执行后的环境反馈，不由 Planner 是否调用工具或自行宣告完成决定。预算耗尽和外部故障仍记为运行停止，不能替代环境成功。开放任务由 Executor 经环境提交后独立验收。终局或额度用尽后至多一次只读收尾；失败不抹去已有裁决。先前列出的“PC 不调用工具时如何继续”源于把统一叙述误当作必需的工具接口，已撤回。研究者已授权实施和同一 `dev/2` 六配置实机验收，每组最多 20 个真实环境步；当前代码和离线契约检查对应这一两阶段目标。
+PC 每个非终局轮必须执行一次 Executor，任务终止与成败依据执行后的环境反馈，不由 Planner 是否调用工具或自行宣告完成决定。预算耗尽和外部故障仍记为运行停止，不能替代环境成功。环境明确终局或预算停止后直接记录结果，不再额外调用 Planner；终止依据环境的 done／原因，中间奖励不单独触发停止。模型文本不作为完成信号，不进行自然语言关键词校验。ALFWorld 直接采用原生环境结果；Terminal-Bench 已有的提交工作区与 Harbor 原生测试路径单列，不为当前任务新增验收环节。先前列出的“PC 不调用工具时如何继续”源于把统一叙述误当作必需的工具接口，已撤回。研究者已授权实施和同一 `dev/2` 六配置实机验收，每组最多 20 个真实环境步；当前代码和离线契约检查对应这一两阶段目标。
 
-新实机的六配置均在 4 个真实环境步后获奖励 1。PE-D-S 在找到、拿起遥控器后分别触发 `request_plan`，结果与调用 ID 配对。初始子计划为定位，随后交付拿取、移动到沙发；Executor 移动后直接完成放置，没有第三次求助。研究者接受这一最终轨迹：Executor 驱动整任务，能够直接完成目标时，无需为阶段形式追加规划。研究者同时明确工具说明暂不修改，不据本例另定通用触发规则或加入阶段门控，也不再将该样本列为待修复缺口。两种 PC 均验证固定单步循环和终局后的唯一只读收尾，无模型工具；PC-F 首次规划超时保留归档，恢复后成功。PE-D-F 只有初始规划，在线复核或修订分支仍未得到实机验收。本次运行不构成成功率、成本优势或学习收益证据。[实机记录](experiments/planner-centered/README.md#两阶段运行协议)
+新实机的六配置均在 4 个真实环境步后获奖励 1。PE-D-S 在找到、拿起遥控器后分别触发 `request_plan`，结果与调用 ID 配对。初始子计划为定位，随后交付拿取、移动到沙发；Executor 移动后直接完成放置，没有第三次求助。研究者接受这一最终轨迹：Executor 驱动整任务，能够直接完成目标时，无需为阶段形式追加规划。研究者同时明确工具说明暂不修改，不据本例另定通用触发规则或加入阶段门控，也不再将该样本列为待修复缺口。当时两种 PC 均验证固定单步循环和终局后的唯一只读收尾，无模型工具；该收尾策略现已取消，原有调用与成本保留。PC-F 首次规划超时保留归档，恢复后成功。PE-D-F 只有初始规划，在线复核或修订分支仍未得到实机验收。本次运行不构成成功率、成本优势或学习收益证据。[实机记录](experiments/planner-centered/README.md#两阶段运行协议)
 
 2026-11-21 核查了以下项目的官方源码。阅读范围为工具定义、参数处理、工具列表装配和执行分发，未安装或运行这些框架。
 
@@ -245,7 +251,7 @@ PC 每个非终局轮必须执行一次 Executor，任务终止与成败依据�
 | JSON 与 thinking_summary | 普通响应要求 JSON，`thinking_summary` 必填，是实现契约。 | 当前字段改为 `assessment`，计划内部保留 JSON。研究者提出以 `<think>` 和 `<plan>` 划分文本，最终标签表示仍待讨论。 |
 | Verified phases | 整段当轮 `thinking_summary` 被归档并回放，已完成阶段夹带未来工作。 | 模型输入只保留阶段目标、完成条件与证据引用，原始判断留日志。`verified` 是 Planner 判断；单独的语义 verifier 曾讨论但尚未引入。 |
 
-上下文与编号实现见[运行实现](src/toolkit/frameworks/runtime.py)，格式约定见 [Planner 模板](src/toolkit/prompts/frameworks.py)。标签可以划分公开判断、规划和动作，但不等同于服务端单独返回的推理内容；本批请求 `reasoning_effort: none` 后用量仍报告非零推理 token，不能据请求值断言实际已关闭。PE-D 求助继续是原生 `tool_calls`，不因普通文本格式选择而改为伪工具命令。
+上下文与编号实现见[运行实现](src/toolkit/frameworks/runtime.py)，格式约定见 [Planner 模板组织](src/toolkit/README.md#统一提示词)。标签可以划分公开判断、规划和动作，但不等同于服务端单独返回的推理内容；本批请求 `reasoning_effort: none` 后用量仍报告非零推理 token，不能据请求值断言实际已关闭。PE-D 求助继续是原生 `tool_calls`，不因普通文本格式选择而改为伪工具命令。
 
 上下文容量管理与自动压缩分开。当前 Toolkit 提供 `context_window.max_input_tokens`，默认 `null`，研究者明确先不设数值。单次 prompt 正文嵌入按时间排列的完整交互；配置上限后，按角色持续淘汰最早的完整单元，不因固定前缀缩短重新补回已淘汰项，必要引用可明确保护。当前任务、计划或阶段、当前观察和正在交接的原生工具消息保留；这些内容本身放不下时记录窗口错误，不发送请求。没有模型摘要，完整原始日志不变。
 
@@ -263,7 +269,7 @@ PE-D-F 本次只验证了初始规划和正常执行。后续需在公开反馈�
 
 首次 v3 采样（01）的[六配置单任务轨迹](experiments/planner-centered-v2/README.md#本轮单任务实机验收)已生成，未修改提示或补跑。五组 4 步成功，PC-F 在首次监测时将阶段 2 具体化为从 `coffeetable 1` 拾取，重发 `full_plan` 却漏 `revision_reason`，被现行契约拒绝；这不是原生环境失败。当前实现按完整计划结构变化识别修订，因此也覆盖措辞变化和位置具体化。是否接受这种边界、是否将阶段更新和路线修订区分，留待研究者审阅真实输出，不在本轮自行更改。两种 PE-D 本轮均未求助，原生交接分支仍未实机覆盖。
 
-核对 PC-F 事件 8 的实际请求，提示确有「Only provide full_plan again when you revise the route, with revision_reason.」，但只将该字段关联到路线修订，没有说明任意措辞变化或已知位置具体化也强制需要理由。该次 JSON 字段契约的 `required` 仅含 `assessment`，没有表达条件必需；运行器则对变化后的 `full_plan` 一律要求非空 `revision_reason`。因此本次拒绝符合代码，却暴露了提示语义与判定范围没有对齐，不能仅归因为 Planner 遗漏已明确约定的字段。[提示](src/toolkit/prompts/frameworks.py) · [判定](src/toolkit/frameworks/runtime.py)
+核对 PC-F 事件 8 的实际请求，提示确有「Only provide full_plan again when you revise the route, with revision_reason.」，但只将该字段关联到路线修订，没有说明任意措辞变化或已知位置具体化也强制需要理由。该次 JSON 字段契约的 `required` 仅含 `assessment`，没有表达条件必需；运行器则对变化后的 `full_plan` 一律要求非空 `revision_reason`。因此本次拒绝符合代码，却暴露了提示语义与判定范围没有对齐，不能仅归因为 Planner 遗漏已明确约定的字段。[当时实际请求](experiments/planner-centered-v2/runs/v3-deepseek-dev2-01/report.html) · [判定](src/toolkit/frameworks/runtime.py)
 
 研究者随后授权先明确 `revision_reason` 的 JSON 字段要求：修改后整体计划和非空理由放在同一个 JSON，首次规划不要求理由，只转到已有阶段时省略整体计划。本轮按现有代码将任意计划内容变化视为修改，不重新定义路线修订，也不增加回退或重试。
 
@@ -273,7 +279,7 @@ PE-D-F 本次只验证了初始规划和正常执行。后续需在公开反馈�
 
 ### Planner 能力说明与动作接口
 
-规划粒度与动作信息的可见范围分别定义。高层 Planner 负责子目标、前提依赖、取证和路线调整，需要了解 Executor 的能力与约束；知道动作接口本身不使它成为低层策略。原 ALFWorld 与 ScienceWorld 模板直接列出原子命令，并以执行者口吻描述，存在诱导逐动作规划的风险。按研究者要求，当前四环境模板参考本地 `verl-agent-system` 的抽象 global plan 写法，改为子目标、前提和证据要求，删除具体命令指令。动态候选目录只加入 Executor 消息，Planner 接收原始公开观察与已执行动作；职责分离同时落实在提示词和输入构造中。[当前模板](src/toolkit/prompts/alfworld.py) · [规划职责](PROPOSAL.md)
+规划粒度与动作信息的可见范围分别定义。高层 Planner 负责子目标、前提依赖、取证和路线调整，需要了解 Executor 的能力与约束；知道动作接口本身不使它成为低层策略。原 ALFWorld 与 ScienceWorld 模板直接列出原子命令，并以执行者口吻描述，存在诱导逐动作规划的风险。按研究者要求，四环境的独立计划模板参考本地 `verl-agent-system` 的抽象 global plan 写法，改为子目标、前提和证据要求，删除具体命令指令；这些模板现保存在 `pe_s/` 各 benchmark 模块的 `PLANNER_TEMPLATE` 中。动态候选目录只加入 Executor 消息，Planner 接收原始公开观察与已执行动作；职责分离同时落实在提示词和输入构造中。[当前固定计划模板](src/toolkit/prompts/pe_s/alfworld.py) · [规划职责](PROPOSAL.md)
 
 动作语法模板、动作与对象的候选组合、当前状态的有效动作须分开。按本轮实际依赖核查，ALFWorld 0.4.2 的 TextWorld 后端返回 `info["admissible_commands"]`；ScienceWorld 1.2.3 提供 `get_possible_actions()` 模板、包含无效项的 `get_possible_action_object_combinations()`，以及 `get_valid_action_object_combinations()` 和 `info["valid"]`。当前适配器将 ALFWorld 与 ScienceWorld 原生 reset/step 返回的有效列表提供给 Executor，ALFWorld 缓存更新方式参考 verl-agent。WebShop `64fa2a5` 的 `get_available_actions()` 从当前页面提取搜索框与可点击标签，也经统一接口提供给 Executor。四种框架沿用同一后端的相同规则；候选不保证动作推进任务或购物成功。[ALFWorld 接口](https://github.com/alfworld/alfworld/blob/0.4.2/alfworld/agents/environment/alfred_tw_env.py) · [ScienceWorld 接口](https://github.com/allenai/ScienceWorld/blob/1.2.3/scienceworld/scienceworld.py) · [WebShop 接口](https://github.com/princeton-nlp/WebShop/blob/64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd/web_agent_site/envs/web_agent_text_env.py)
 
@@ -315,6 +321,16 @@ ALFWorld 的 HTTP 429、连接错误、超时和服务端错误会留下缺评�
 
 ### 当前协议拒绝与规划能力的区分
 
+研究者明确，单个 JSON 对象外包 Markdown 代码围栏可以接受，没有必要只因这一包装中断任务。建议把运行可解析性与输出格式偏好分开：只规范化完整的外层围栏，随后仍检查 JSON 对象、必需字段、阶段编号和证据引用，不补写或猜测规划内容。原始回复继续保存；若未来训练希望抑制围栏，可依据原文单独计算 format reward，不能在规范化后将原格式抹去。这是候选训练处理，不代表已选定奖励形式或启动 RL。当前代码仍直接解析原始正文，本次讨论未修改运行器或重采；旧实验拒绝与成本保留原样。
+
 首轮 75 条协议缺评的直接触发输出来自 Planner 60 条、Executor 15 条，均已按原始响应和实际拒绝条件核查。代码围栏和 JSON Schema 外壳属于生成格式与解析契约的冲突，不能直接解释为规划内容错误；schema 用于说明字段时，模型仍可能输出 schema 本身或将实例值置于 `properties` 中。是否给解析器有限兼容或改写格式说明，需在后续独立版本中决定，本轮未更换输入。[首轮分布与原始证据](experiments/planner-centered-v2/README.md#首轮-75-条协议缺评核查) · [最终异常轨迹查看页](experiments/planner-centered-v2/runs/alfworld-test-qwen38-27b-deepseek-02/failure-review.html)（含全部归档异常，不能视为首轮核查的同一分母）
 
 另有三处已确认的运行边界。第一，PE-D 的第二次连续 `request_plan` 在真正调用 Planner 前即因 `no_action_rounds > 1` 被拒绝；该上限未在模型提示中说明，不能说成 Planner 第二次回答失败。第二，当前 `keep: true` 与计划字段同时出现就被拒绝，即使重发值与已有计划相同；这把冗余表达也当作冲突，是否放宽仍待讨论。第三，`previous_stage_status: verified` 要求同时存在证据引用、旧阶段且新旧阶段不同；本轮对应样本是仍指向原阶段而被拒绝，并非独立 verifier 判断完成证据在语义上不成立。阶段状态、阶段切换与完成验证应分清；当前仍没有独立阶段语义 verifier。本轮只记录这些限制，未在恢复中修改协议、prompt 或评分。最终 PC-F 仅 2 / 134 条有效评分、PC-S 为 37 / 134；仅有分样本的条件成功率不能代替完整任务覆盖下的架构表现。
+
+研究者审阅 `m1-t1-pe-d-s` 后，进一步区分了“当前子目标仍有效”和“当前指导已回答求助”。Executor 问定位 bowl 的更有效方法，Planner 认可请求但 keep；工具只重送原目标与完成条件，不回送 assessment。随后 Executor 表示准备查 countertop，却又调用规划工具，因第二次连续求助而在 0 个环境步时终止。该例支持分别审查请求满足程度、动作／求助分支选择和运行器停止规则，也暴露出保持同一子目标时补充方法指导的职责与交付边界。它尚不能证明三者之间的因果关系，或证明放宽限制、增补指导、采用 benchmark 专用提示词能改善成功率。[逐事件证据与解释边界](experiments/planner-centered-v2/README.md#定位-bowl-时的求助与连续调用)
+
+首次 `test/1` 采样的两条 PE-D 又出现了可见执行方向与实际工具分支不一致。`Thought:` 是普通响应正文，可与原生 `tool_calls` 同时返回；协议禁止的是 `Action:` 与规划调用混发。两条第二次请求均表示准备搜索 countertop，却仍调用 `request_plan`，理由没有提出新的规划问题。当前本地客户端没有设置强制工具选择，也没有从 Thought 合成工具请求，日志中的正文与调用字段分别取自模型 API 响应；这一核查不等于核验了网关改写前的上游原始响应。候选解释是混合接口带来的选择困难：环境动作用 `Action:` 文本，唯一原生工具却是规划求助；基础提示还无条件要求每轮一条 Action，后置规则则允许求助并禁止附带 Action，例外未在基础要求中写清。该歧义已确认存在，是否导致此次行为仍须对照，不能从可见 Thought 推断内部决策过程。该次核查只记录问题，没有修改当次实验提示或追加生成请求。[当时采样与原始轨迹](experiments/planner-centered-v2/README.md#最新提示词单任务轨迹验收test1)
+
+研究者随后要求先统一行动／求助输出，并将提示词按六种实际配置、再按 benchmark 组织。当前工作区使用 `eo/`、`pe_s/`、`pe_d_f/`、`pe_d_s/`、`pc_f/`、`pc_s/` 六个目录；Full/sub 的角色、规划文案、执行指令和求助说明可分别审核。框架按 `mode` 与 benchmark 加载唯一模块，不再将环境默认 Action 指令与求助例外叠加。PE-D 单轮选择一个环境动作或一次原生规划求助；Thought 可解释该分支，求助须提出具体未解决的规划需求，不能只宣布执行意图。工具原有 Full/sub 时机说明保留，不新增强制求助或行动间隔；连续无动作保护和其他解析、预算规则不变。离线请求组装与回归检查通过后，研究者授权同一 `test/1` 六配置各一次的真实复验；不能由结构简化或文字澄清推断旧行为的原因或成功率改善。[六配置提示入口](src/toolkit/README.md#统一提示词)
+
+六目录更新后的 `test/1` 02 已完成，58 份实际请求均对应所选配置的 benchmark 模块，Full/sub 初始与监测文案、PE-D 互斥规则及原生工具描述已逐条核对。EO、PE-S 和两种 PE-D 成功；PE-D 全程自主行动，仅各一次初始 Planner，本轮未触发在线求助。两种 PC 均在第 2 步后以 Markdown 围栏交付 JSON，触发 `invalid_planner_json` 而缺评；没有按零分统计，也未修改解析后重采。弃用目标仍未触发。这次结果只能用于审核组装与实际行为，不能说明统一规则消除了连续求助，或说明新文案改善架构性能。[设置、完整轨迹与逐请求核对](experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验)
