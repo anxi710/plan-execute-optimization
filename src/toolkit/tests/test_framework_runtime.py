@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 from toolkit.envs.base import ActionResult
 from toolkit.frameworks import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, PLAN_SCOPES, run_framework
+from toolkit.frameworks.runtime import _planner_json
+from toolkit.frameworks.tools import ToolProtocolError
 from toolkit.models.context import ContextWindow
 from toolkit.prompts import load_framework_prompts
 
@@ -16,6 +18,10 @@ from test_frameworks import Household, events, reply
 
 def plan(summary, **fields):
     return reply(json.dumps({"assessment": summary, **fields}))
+
+
+def fenced(response):
+    return {**response, "text": f"```json\n{response['text']}\n```"}
 
 
 def tool(name, **args):
@@ -53,6 +59,37 @@ def verified_placement(messages, *, full=False):
 class MenuHousehold(Household):
     def get_available_actions(self):
         return [ACTIONS[min(self.state.steps, len(ACTIONS) - 1)]]
+
+
+class PlannerJsonTests(unittest.TestCase):
+    def test_plain_and_complete_fenced_objects_keep_the_original_response(self):
+        fields = {"assessment": "Observed text with ``` and a line separator: \u2028.", "evidence_refs": [1]}
+        body = json.dumps(fields, ensure_ascii=False, indent=2)
+        texts = (body, f" \n{body}\t", f"```json\n{body}\n```", f"```\n{body}\n```",
+                 f" \n\t```JSON \t\r\n{body}\r\n```\r\n ")
+        for text in texts:
+            with self.subTest(text=text):
+                response = reply(text)
+                original = deepcopy(response)
+                self.assertEqual(_planner_json({"response": response}), fields)
+                self.assertEqual(response, original)
+
+    def test_wrapping_does_not_extract_ambiguous_or_invalid_objects(self):
+        body = '{"assessment": "Continue."}'
+        wrapped = f"```json\n{body}\n```"
+        texts = (f"Here is the plan:\n{wrapped}", f"{wrapped}\nExplanation.", f"{body}\n{body}",
+                 f"```json\n{body}\n{body}\n```", f"{wrapped}\n{wrapped}", f"```json\n{body}",
+                 f"{body}\n```", f"```python\n{body}\n```", '```json\n{"assessment":}\n```',
+                 "```json\n[]\n```", "[]", "null", "42", None)
+        for text in texts:
+            with self.subTest(text=text), self.assertRaisesRegex(ToolProtocolError, "^invalid_planner_json$"):
+                _planner_json({"response": reply(text)})
+
+    def test_fenced_objects_do_not_bypass_truncation_or_tool_checks(self):
+        for fields, error in (({"finish_reason": "length"}, "truncated_response"),
+                              ({"tool_calls": [{"id": "unexpected"}]}, "unavailable_tool")):
+            with self.subTest(error=error), self.assertRaisesRegex(ToolProtocolError, f"^{error}$"):
+                _planner_json({"response": {**fenced(plan("Continue.")), **fields}})
 
 
 class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -297,6 +334,47 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 executor.assert_not_awaited()
                 self.assertTrue(events(record, "decision_error", error=error))
                 self.assertEqual(record["outcome"], {"reason": "protocol_error", "success": None, "reward": None})
+
+    async def test_pc_fenced_initial_and_monitor_replies_execute_and_preserve_raw_text(self):
+        for mode in ("pc-f", "pc-s"):
+            with self.subTest(mode=mode):
+                full = mode == "pc-f"
+                initial = (plan("Collect and place it.", full_plan=full_plan(FIND, PLACE), current_subplan_id=1)
+                           if full else plan("Collect the object.", **FIND))
+
+                def advance(messages):
+                    return fenced(verified_placement(messages, full=full))
+
+                record, env, planner, _ = await self.trial(
+                    mode, [fenced(initial), fenced(plan("Continue collecting.")), advance],
+                    [reply(f"Action: {action}") for action in ACTIONS],
+                )
+                self.assertEqual(env.actions, ACTIONS)
+                self.assertTrue(record["outcome"]["success"])
+                self.assertEqual(planner.await_count, 3)
+                calls = events(record, "model_call", role="planner")
+                self.assertEqual(calls[0]["response"]["text"], fenced(initial)["text"])
+                self.assertTrue(all(call["response"]["text"].startswith("```json\n") for call in calls))
+                self.assertEqual(events(record, "planner_decision")[-1]["decision"], "advance")
+
+    async def test_pc_fenced_replies_keep_field_evidence_and_stage_validation(self):
+        cases = (
+            ("pc-s", [plan("Missing the stage.")], [], "missing_stage_objective"),
+            ("pc-s", [plan("Start collecting.", evidence_refs=[999], **FIND)], [], "unknown_evidence_ref"),
+            ("pc-f", [plan("Collect it.", full_plan=full_plan(FIND), current_subplan_id=2)], [],
+             "unknown_subplan_id"),
+            ("pc-s", [plan("Start collecting.", **FIND),
+                      plan("Claim completion without changing stage.", previous_stage_status="verified",
+                           evidence_refs=[2])], [reply("Action: inspect box")], "unverified_stage_transition"),
+        )
+        for mode, responses, actions, error in cases:
+            with self.subTest(mode=mode, error=error):
+                wrapped = [fenced(response) for response in responses]
+                record, env, _, _ = await self.trial(mode, wrapped, actions)
+                self.assertEqual(len(env.actions), len(actions))
+                self.assertTrue(events(record, "decision_error", error=error))
+                self.assertEqual(record["outcome"]["reason"], "protocol_error")
+                self.assertEqual(events(record, "model_call", role="planner")[-1]["response"], wrapped[-1])
 
     async def test_invalid_replanning_request_is_rejected_before_planner_or_environment_replay(self):
         mixed = tool("request_plan", reason="Plan.")

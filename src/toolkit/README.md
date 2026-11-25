@@ -107,7 +107,9 @@ Planner 正文不注入初始规划或持续监测的阶段标题，直接使用
 
 初始观察编号为 1，后续环境反馈依次为 2、3……；模型调用、规划求助和本地格式错误不占观察号。事件日志另存 `event_id`，观察事件持久保存 `observation_id`，`evidence_refs` 引用观察号。ALFWorld 的框架初始观察只含场景，任务目标独立提供；原始任务文本及普通 rollout 的任务输入保留。PE-S 的 Planner 模板只说明一次初始规划，PE-D 区分初始规划与后续求助。已完成阶段的模型输入只保留阶段、完成条件和证据引用，原始判断保存在日志中；`verified` 是 Planner 判断，尚未引入独立阶段 verifier。
 
-PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
+PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式。
+
+Planner 解析接受纯 JSON，以及完整三反引号围栏包裹的单个 JSON 对象；围栏可无语言标记或标为 `json`（大小写均可），支持 LF／CRLF 和外侧空白。只在局部解析副本中剥离围栏，原始 `model_call.response` 保留。前后夹带说明、多块或多个对象、无效 JSON 和不完整围栏仍不接受；截断、工具输出及后续字段、阶段、证据校验保持。提示词继续偏好纯 JSON，未来是否设置 format reward 单独决定；其他 P10 扩展解析策略仍延后。
 
 PC-F 后续返回修改后的 `full_plan` 时，必须在同一 JSON 对象提供非空字符串 `revision_reason`，说明改了什么、为什么改。当前判定涵盖措辞调整和新增细节；首次规划不要求理由。只推进到已有阶段时返回 `current_subplan_id`，省略 `full_plan`。提示和字段说明明确这项条件，判定范围暂不调整。
 

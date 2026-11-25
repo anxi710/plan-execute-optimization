@@ -80,8 +80,13 @@ def _planner_json(event):
         raise ToolProtocolError("truncated_response")
     if response.get("tool_calls"):
         raise ToolProtocolError("unavailable_tool")
+    text = response.get("text")
+    if isinstance(text, str):
+        fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", text.strip(), re.DOTALL | re.IGNORECASE)
+        if fenced:
+            text = fenced[1]
     try:
-        fields = json.loads(response.get("text"))
+        fields = json.loads(text)
     except (TypeError, json.JSONDecodeError) as error:
         raise ToolProtocolError("invalid_planner_json") from error
     if not isinstance(fields, dict):
