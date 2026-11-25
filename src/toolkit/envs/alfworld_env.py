@@ -22,6 +22,7 @@ class AlfWorldEnv(BaseEnv):
     def __init__(self, task, *, instruction_path,
                  max_steps=DEFAULT_CONFIG["environments"]["default_max_steps"], **_):
         self.task = task
+        self.instruction_path = instruction_path
         self.available = None
         super().__init__(
             observation=task.observation,

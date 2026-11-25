@@ -2,18 +2,11 @@
 
 from pathlib import Path
 
-from .alfworld import ALFWORLD_EXECUTOR_TEMPLATE, ALFWORLD_PLANNER_TEMPLATE
-from .sciworld import SCIWORLD_EXECUTOR_TEMPLATE, SCIWORLD_PLANNER_TEMPLATE
-from .terminalbench import TERMINALBENCH_EXECUTOR_TEMPLATE, TERMINALBENCH_PLANNER_TEMPLATE
-from .webshop import WEBSHOP_EXECUTOR_TEMPLATE, WEBSHOP_PLANNER_TEMPLATE
+from .loader import load_framework_prompts
 
 
 def render_planner_prompt(benchmark: str, task: str) -> str:
-    templates = {
-        "alfworld": ALFWORLD_PLANNER_TEMPLATE, "sciworld": SCIWORLD_PLANNER_TEMPLATE,
-        "webshop": WEBSHOP_PLANNER_TEMPLATE, "terminalbench": TERMINALBENCH_PLANNER_TEMPLATE,
-    }
-    return templates[benchmark].format(task=task)
+    return load_framework_prompts("pe-s", benchmark).PLANNER_TEMPLATE.format(task=task)
 
 
 def resolve_executor_instruction_path(benchmark: str, config=None) -> str | None:
@@ -27,14 +20,10 @@ def resolve_executor_instruction_path(benchmark: str, config=None) -> str | None
     return str((Path(__file__).resolve().parents[2] / path).resolve())
 
 
-def load_executor_instruction(benchmark: str, instruction_path: str | Path | None = None) -> str:
+def load_executor_instruction(benchmark: str, instruction_path: str | Path | None = None, *, mode: str = "eo") -> str:
     if instruction_path is not None:
         return Path(instruction_path).read_text(encoding="utf-8")
-    templates = {
-        "alfworld": ALFWORLD_EXECUTOR_TEMPLATE, "sciworld": SCIWORLD_EXECUTOR_TEMPLATE,
-        "webshop": WEBSHOP_EXECUTOR_TEMPLATE, "terminalbench": TERMINALBENCH_EXECUTOR_TEMPLATE,
-    }
-    return templates[benchmark]
+    return load_framework_prompts(mode, benchmark).EXECUTOR_PROMPT
 
 
 def render_executor_prompt(instruction: str, task: str) -> str:

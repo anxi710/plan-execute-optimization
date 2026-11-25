@@ -188,7 +188,7 @@ EO 和 PE 由 Executor 推进整项任务，PC 由 Planner 推进整项任务。
 | 实施次序与现有入口 | 离线验收条件 |
 | --- | --- |
 | 1. 模型调用。从 [recipe 的 model_call](../../src/recipe/planner-centered/run.py) 到[共享客户端](../../src/toolkit/models/openai.py)保留原生工具定义、返回参数与配对 ID，请求长度检查覆盖实际提示及工具定义。 | 用内存响应分别返回普通文本和仅含工具调用的消息；调用一次、正确配对一次，被调用角色收到文字任务。PE 取计划的环境步计为零，PE-S 下一次请求已撤下工具。 |
-| 2. 控制与输入。在[框架控制器](../../src/toolkit/frameworks/control.py)实现六种配置和生效阶段转移，在[框架提示模板](../../src/toolkit/prompts/frameworks.py)实现两个 PC 共同阶段，在[共享会话](../../src/toolkit/rollout/session.py)按阶段构建 Executor 输入。 | 对同一条价格观察运行四个动态配置。两种 PC 各初始化一次，实际动作每得到一次反馈就监控一次；同轮记录判断依据和交付。PC-S 能回查全部已验证阶段；PC-F 能通过编号推进，也能只改未来计划。 |
+| 2. 控制与输入。在[框架控制器](../../src/toolkit/frameworks/control.py)实现六种配置和生效阶段转移，在当时的 `prompts/frameworks.py` 实现两个 PC 共同阶段（[当前提示词入口](../../src/toolkit/README.md#统一提示词)已重组），在[共享会话](../../src/toolkit/rollout/session.py)按阶段构建 Executor 输入。 | 对同一条价格观察运行四个动态配置。两种 PC 各初始化一次，实际动作每得到一次反馈就监控一次；同轮记录判断依据和交付。PC-S 能回查全部已验证阶段；PC-F 能通过编号推进，也能只改未来计划。 |
 | 3. 预算与清单。[环境适配器](../../src/toolkit/envs/base.py)在实际派发处计步，[recipe 调度](../../src/recipe/planner-centered/benchmark.py)与调用包装同步移除原先的按周期返回和角色上限。保留已获授权的运行资源边界。 | 本地无效动作计零环境步，后端拒绝已派发动作计一步。最后一步成功优先保留环境结果，最后一次只读收尾失败不改评分，连续无动作往返可终止。模型输入中没有剩余额度。 |
 | 4. 轨迹与结果。[配对报告](../../src/recipe/planner-centered/report.py)和[轨迹导出](../../src/recipe/planner-centered/export_alfworld.py)从清单读取协议版本与配置集合，阅读器展示对应的实际交付。 | 旧四配置的样本仍按当时协议读取，新六配置各自可选、可配对。能从同一轨迹区分环境步、监控、换阶段、修订与收尾。历史 `pe-d` 或 `pc` 记录不并入新版变体的结果。 |
 

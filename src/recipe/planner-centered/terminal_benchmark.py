@@ -24,7 +24,7 @@ from harbor.models.trial.config import AgentConfig, EnvironmentConfig, TaskConfi
 from harbor.trial.trial import Trial
 from toolkit.envs.base import BaseEnv
 from toolkit.frameworks import FRAMEWORK_PROTOCOL, run_framework
-from toolkit.prompts import TERMINALBENCH_EXECUTOR_TEMPLATE, render_executor_prompt
+from toolkit.prompts import load_executor_instruction, render_executor_prompt
 from toolkit.rollout.state import State
 from toolkit.rollout.terminalbench import load_terminalbench_trial
 from toolkit.tasks.terminalbench import TerminalBenchTask
@@ -287,7 +287,7 @@ class TerminalWorkspace:
         self.max_steps = max_steps
 
     def reset(self):
-        prompt = render_executor_prompt(TERMINALBENCH_EXECUTOR_TEMPLATE, self.initial_observation)
+        prompt = render_executor_prompt(load_executor_instruction("terminalbench"), self.initial_observation)
         self.state = State(history=[{"role": "user", "content": prompt}])
         return prompt, self.state
 
@@ -774,7 +774,6 @@ async def preflight(root, output, task_key=MUSIC_TASK):
                         "completion_condition": "The command prints workspace retained.",
                         "previous_stage_status": "verified", "evidence_refs": [2]}),
             json.dumps({"assessment": "The second command confirmed persistence.", "evidence_refs": [3]}),
-            "Assessment: The Executor submitted the workspace for native verification.",
         ]),
         executor=scripted_model([
             f"Action: test -f {public_input} && {absence_check} && test ! -d /solution "

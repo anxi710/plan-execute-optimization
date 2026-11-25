@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 
-from .frameworks import PLAN_HINT, THOUGHT_PLAN_HINT
+PLAN_HINT = 'This plan may be helpful for you to complete the task:'
+THOUGHT_PLAN_HINT = 'This plan may be helpful to complete the task:'
 
 
 @dataclass(frozen=True)

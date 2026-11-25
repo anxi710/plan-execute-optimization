@@ -4,13 +4,7 @@ import json
 import re
 from functools import partial
 
-from toolkit.prompts import load_executor_instruction, render_action_feedback
-from toolkit.prompts.frameworks import (
-    CONTINUOUS_EXECUTION_MONITORING, INITIAL_SUB_PLAN_GENERATION, EXECUTOR_DELEGATION_PROMPT,
-    EXECUTOR_PLAN_REQUEST_PROMPT, FRAMEWORK_PLANNER_PROMPT, TERMINAL_REVIEW_PROMPT, PC_FULL_PROMPT,
-    PC_INITIAL_PROMPT, PC_MONITOR_PROMPT, PC_SUB_PROMPT, PE_INITIAL_PLAN_PROMPT, PE_REPLAN_PROMPT,
-    PE_STATIC_PLAN_PROMPT, PE_SUB_PLAN_PROMPT, PLANNER_JSON_FORMAT,
-)
+from toolkit.prompts import load_executor_instruction, load_framework_prompts, render_action_feedback
 from toolkit.models.context import ContextRecord, ContextWindow, ContextWindowExceeded
 from toolkit.rollout.log import EventLog
 from toolkit.rollout.session import RolloutSession
@@ -45,16 +39,8 @@ def _function(name, description, properties, required, handler):
     return FunctionTool(name, description, {"type": "object", "properties": properties, "required": required}, handler)
 
 
-def _plan_request(scope, handler):
-    trigger = (
-        "After the first plan, request a revision of the remaining task if new evidence changes a major "
-        "dependency or constraint. Continue independently when the plan already gives a viable alternative."
-        if scope == "full" else
-        "After the first plan, request the next sub-plan once the current completion condition is met, "
-        "or when the sub-goal is blocked or no longer appropriate. Call before starting a subsequent phase. "
-        "Choose actions independently within the active sub-plan."
-    )
-    return _function("request_plan", f"Get advisory planning for the original task. {trigger}", {
+def _plan_request(description, handler):
+    return _function("request_plan", description, {
         "reason": {**_TEXT, "description": "State why you need a plan and what relevant fact or condition changed."},
         "evidence_refs": _JUDGMENT["evidence_refs"],
     }, ["reason"], handler)
@@ -157,6 +143,8 @@ class FrameworkRun:
         self.scope = PLAN_SCOPES[mode]
         self.pc = mode.startswith("pc")
         self.benchmark = benchmark
+        self.prompts = load_framework_prompts(mode, benchmark)
+        self.plan_request_description = self.prompts.PLAN_REQUEST_DESCRIPTION if mode.startswith("pe-d") else None
         self.external_verifier = external_verifier
         self.goal = goal
         self.workspace_id = workspace_id
@@ -175,7 +163,9 @@ class FrameworkRun:
         }, save=lambda: save(self.record))
         self.session = RolloutSession(env, {"planner": planner, "executor": executor}, log=self.log,
                                       count_dispatched=True)
-        self.instruction = getattr(env, "instruction", None) or load_executor_instruction(benchmark)
+        instruction_path = getattr(env, "instruction_path", None)
+        self.instruction = (load_executor_instruction(benchmark, instruction_path, mode=mode)
+                            if instruction_path is not None else self.prompts.EXECUTOR_PROMPT)
         self.context_windows = {role: ContextWindow(**(context_window or {})) for role in ("planner", "executor")}
         self.context_metadata = {}
         self.record["context_window"] = {"max_input_tokens": self.context_windows["executor"].max_input_tokens}
@@ -300,7 +290,7 @@ class FrameworkRun:
             content = "\n\n".join([content, *trailing_blocks])
             return [{"role": "user", "content": content}, *paired]
 
-        options = {"tools": [_plan_request(self.scope, self._request_plan).schema]} if planning else {}
+        options = {"tools": [_plan_request(self.plan_request_description, self._request_plan).schema]} if planning else {}
         try:
             messages, metadata, visible = self.context_windows[role].prepare(
                 records, render, protected=protected, model_options=options,
@@ -314,10 +304,6 @@ class FrameworkRun:
 
     def _executor_context(self, *, planning):
         guidance = []
-        if self.pc:
-            guidance.append(EXECUTOR_DELEGATION_PROMPT)
-        elif planning:
-            guidance.append(EXECUTOR_PLAN_REQUEST_PROMPT)
         if self.stage:
             guidance.append(f"Active sub-plan: {self.stage['stage_objective']}\n"
                             f"Completion condition: {self.stage['completion_condition']}")
@@ -352,7 +338,7 @@ class FrameworkRun:
         if reason:
             guidance.append(f"Trigger: {reason}")
         messages, visible = self._history_context(
-            "planner", [FRAMEWORK_PLANNER_PROMPT.format(benchmark=self.benchmark), self._goal()],
+            "planner", [self.prompts.PLANNER_PROMPT, self._goal()],
             trailing_blocks=guidance, required=required,
         )
         visible.update(ref for item in self.verified_stages for ref in item["evidence_refs"])
@@ -390,15 +376,11 @@ class FrameworkRun:
         return self._tool_result(event, tool, guidance)
 
     async def _plan_pe(self, *, initial, reason=None, required=()):
-        phase = INITIAL_SUB_PLAN_GENERATION if initial else CONTINUOUS_EXECUTION_MONITORING
-        task = ("Produce a numbered plan covering the remaining whole task." if self.scope == "full"
-                else PE_SUB_PLAN_PROMPT)
         schema = _plan_schema(self.scope, pc=False, initial=initial)
-        prompt = (PE_STATIC_PLAN_PROMPT if self.mode == "pe-s" else
-                  PE_INITIAL_PLAN_PROMPT if initial else PE_REPLAN_PROMPT)
+        prompt = self.prompts.PLANNER_INITIAL_PROMPT if initial else self.prompts.PLANNER_MONITOR_PROMPT
         messages, visible = self._planner_context(
-            f"{phase}\n\n{prompt}\n{task}\n\n"
-            + PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
+            f"{prompt}\n\n"
+            + self.prompts.PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
             reason=f"Executor requests planning: {reason}" if reason else "Initial planning before execution.",
             required=required,
         )
@@ -421,7 +403,8 @@ class FrameworkRun:
                 changed = self._stage_update(_stage(choice))
         if changed:
             self.plan_version += 1
-        self._planner_log(planner, "keep" if keep else "guide", summary, refs, phase=phase, reason=reason,
+        self._planner_log(planner, "keep" if keep else "guide", summary, refs,
+                          phase="initial_planning" if initial else "execution_monitoring", reason=reason,
                           plan=self.plan, stage_changed=changed and self.scope == "sub")
         if changed:
             self._execution_request(refs)
@@ -461,7 +444,7 @@ class FrameworkRun:
         while True:
             planning = self.mode.startswith("pe-d")
             messages, visible = self._executor_context(planning=planning)
-            tools = [_plan_request(self.scope, partial(self._request_plan, visible=visible))] if planning else []
+            tools = [_plan_request(self.plan_request_description, partial(self._request_plan, visible=visible))] if planning else []
             options = {"tools": [tool.schema for tool in tools]} if tools else {}
             call = await self._call_model("executor", messages, **options)
             if call["response"].get("tool_calls"):
@@ -490,13 +473,11 @@ class FrameworkRun:
         return stage, plan, reason
 
     async def _plan_pc(self, *, initial):
-        phase = INITIAL_SUB_PLAN_GENERATION if initial else CONTINUOUS_EXECUTION_MONITORING
-        prompt = PC_INITIAL_PROMPT if initial else PC_MONITOR_PROMPT
-        profile = PC_FULL_PROMPT if self.scope == "full" else PC_SUB_PROMPT
+        prompt = self.prompts.PLANNER_INITIAL_PROMPT if initial else self.prompts.PLANNER_MONITOR_PROMPT
         schema = _plan_schema(self.scope, pc=True, initial=initial)
         messages, visible = self._planner_context(
-            f"{phase}\n\n{prompt}\n\n{profile}\n\n"
-            + PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
+            f"{prompt}\n\n"
+            + self.prompts.PLANNER_JSON_FORMAT.format(schema=json.dumps(schema, ensure_ascii=False)),
             reason=self.last_feedback,
         )
         call = await self._call_model("planner", messages)
@@ -520,31 +501,28 @@ class FrameworkRun:
             if status == "verified":
                 self.verified_stages.append({"stage": previous_stage, "evidence_refs": refs})
         revised = plan != self.plan
+        discarded_stages = []
+        if previous_stage and changed and params.get("previous_stage_status") in {"blocked", "replaced"}:
+            if self.scope == "full":
+                active_index = next(index for index, item in enumerate(self.plan)
+                                    if item["id"] == previous_stage["id"])
+                verified_stages = [item["stage"] for item in self.verified_stages]
+                discarded_stages = [item.copy() for item in self.plan[active_index:]
+                                    if item not in plan and item not in verified_stages]
+            else:
+                discarded_stages = [previous_stage.copy()]
         self.plan, self.revision_reason = plan, reason
         self.hypotheses, self.remaining_work = hypotheses, remaining
         self._stage_update(stage)
         if revised or (changed and self.scope == "sub"):
             self.plan_version += 1
         choice = "delegate" if initial else "revise" if revised else "advance" if changed else "keep"
-        self._planner_log(call, choice, summary, refs, phase=phase, plan=self.plan, stage_changed=changed,
-                          revision_reason=reason, previous_stage_status=status)
+        self._planner_log(call, choice, summary, refs,
+                          phase="initial_planning" if initial else "execution_monitoring",
+                          plan=self.plan, stage_changed=changed,
+                          revision_reason=reason, previous_stage_status=status, discarded_stages=discarded_stages)
         if changed:
             self._execution_request(refs)
-
-    async def _terminal_review(self):
-        try:
-            messages, _ = self._planner_context(
-                f"{CONTINUOUS_EXECUTION_MONITORING}\n\n{TERMINAL_REVIEW_PROMPT}",
-                reason="The run has ended. Assess the last public feedback.",
-            )
-            call = await self._call_model("planner", messages)
-            if call["response"].get("tool_calls") or call["response"].get("finish_reason") == "length":
-                raise ToolProtocolError("invalid_terminal_review")
-            text = _text(call["response"].get("text"), "assessment")
-            summary = _text(text.removeprefix("Assessment:"), "assessment")
-            self._planner_log(call, "finish", summary, [], phase=CONTINUOUS_EXECUTION_MONITORING, read_only=True)
-        except Exception as error:
-            self.log.emit("decision_error", error=_error_name(error), return_reason=self.stop_reason)
 
     async def run(self):
         try:
@@ -555,7 +533,6 @@ class FrameworkRun:
                     await self._executor_step()
                     if self.stop_reason is None:
                         await self._plan_pc(initial=False)
-                await self._terminal_review()
             else:
                 if self.mode != "eo":
                     await self._plan_pe(initial=True)

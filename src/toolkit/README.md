@@ -8,25 +8,32 @@
 
 ## 统一提示词
 
-Recipe 选择 benchmark 并提供输入，模板和解析方式由 `toolkit.prompts` 维护。公共模板常量、渲染与解析函数、`PlanInjection` 均从这个入口导入。
+框架按实际 `mode` 和 benchmark 调用 `load_framework_prompts(mode, benchmark)`，直接选择一份提示词模块。Full-plan 与 sub-plan 在目录层面区分，不再先加载环境通用指令、再拼接框架例外。渲染、解析函数与 `PlanInjection` 仍从 `toolkit.prompts` 导入。
 
-| 角色 | 输入 | 输出 |
+| 运行配置 | 提示词目录 | 规划范围 |
 | --- | --- | --- |
-| Planner | `render_planner_prompt(benchmark, task)` 接收 `alfworld`、`sciworld`、`webshop` 或 `terminalbench`，以及任务与公开观察。模板填入 `<task>`，要求抽象子目标、前提和证据，不列具体动作命令。 | 回复使用 `<plan>...</plan>`，按步骤列出高层计划。`extract_plan()` 取首个标签正文。沿用原解析规则，回复缺少标签时保留去除首尾空白后的文本。 |
-| Executor | 对应 benchmark 的执行指令、当前任务和每步环境反馈。ALFWorld、ScienceWorld 与 WebShop 的当前候选动作由环境接口提供。可按 `query`、`observation` 或 `thought` 注入已有计划。 | 每步含一行非空 `Action: ...`，前面可带 `Thought:`；`Thought` 是可选推理文本，不是环境动作。环境适配器执行解析出的动作并生成下一条观察。 |
+| `eo` | `prompts/eo/` | 无 Planner。 |
+| `pe-s` | `prompts/pe_s/` | 一次整体规划。 |
+| `pe-d-f` | `prompts/pe_d_f/` | 按需提供剩余整体指导。 |
+| `pe-d-s` | `prompts/pe_d_s/` | 按需提供当前子计划。 |
+| `pc-f` | `prompts/pc_f/` | 整体规划与当前阶段。 |
+| `pc-s` | `prompts/pc_s/` | 当前阶段目标与完成条件。 |
 
-上表的 Planner 输出用于独立计划生成。框架运行中的初始规划与在线监测按下文的两阶段协议交付普通 JSON，不使用 `<plan>` 或伪工具返回来控制执行。
+每个目录下按 benchmark 保存 `alfworld.py`、`sciworld.py`、`webshop.py` 和已有的 `terminalbench.py`。对应模块集中保存角色、初始规划、后续监测、Executor、JSON 格式及实际需要的规划工具说明；无需该角色或阶段的配置不定义对应字段。Terminal-Bench 仅迁移已有文案和调用，不扩展功能。
 
-提示词按环境保存在 `prompts/alfworld.py`、`sciworld.py`、`webshop.py` 和 `terminalbench.py`。每个文件包含对应的 `*_PLANNER_TEMPLATE` 与 `*_EXECUTOR_TEMPLATE` 常量，由 `prompts/__init__.py` 统一导出，并用 `.format()` 插值。这种组织方式参考 verl-agent `796ed310` 的 `agent_system/environments/prompts/`；Planner 的抽象规划要求参考本地 `verl-agent-system` 的 `prompts_planner/alfworld.py`。
+EO、PE-S 和 PC 的 Executor 每轮输出一条非空 `Action: <command>`。PE-D 每轮只能选择一个分支：输出一条环境 `Action:`，或原生调用 `request_plan` 求助；同轮不能两者并发。`Thought:` 可解释所选分支，不能替代动作或工具调用；已有足够信息执行时直接行动，求助应说明具体未解决的规划需求。Full/sub 的求助时机分别由对应模块的工具说明定义。
+
+框架 Planner 的初始规划与在线监测交付普通 JSON。独立的固定计划生成保留原接口：`render_planner_prompt(benchmark, task)` 使用 `pe_s/<benchmark>.py` 的 `PLANNER_TEMPLATE`，要求 `<plan>...</plan>`；`extract_plan()` 取首个标签正文，缺少标签时保留去除首尾空白后的文本。该 XML 接口不控制框架运行。
 
 | 文件 | 职责 |
 | --- | --- |
-| `prompts/frameworks.py` | 集中维护框架协议、指导和约束模板，不执行控制策略。 |
-| `prompts/templates.py` | 选择和渲染模板，加载显式指定的自定义指令文件。 |
+| `prompts/<mode>/<benchmark>.py` | 保存该配置和 benchmark 的完整指令文本，供直接审核与修改。 |
+| `prompts/loader.py` | 将六种运行配置与 benchmark 定位到对应模块。 |
+| `prompts/templates.py` | 渲染独立计划与执行反馈，加载显式指定的自定义指令文件。 |
 | `prompts/plans.py` | 解析模型返回的计划。 |
 | `prompts/plan_injection.py` | 构造计划注入文本，由执行会话应用。 |
 
-ALFWorld、ScienceWorld 和 WebShop 的 `environments.<benchmark>.instruction_path` 默认设为 `null`，使用环境模块的内置 Executor 常量。显式指定 UTF-8 文件路径时，仍按既有路径规则加载自定义指令。Terminal-Bench 的执行指令也由对应环境模块提供。环境适配器不持有计划注入策略，也不选择或调用模型。[ALFWorld 战略采样 Recipe](../recipe/strategy-sampling/README.md#运行)
+ALFWorld、ScienceWorld 和 WebShop 的 `environments.<benchmark>.instruction_path` 默认设为 `null`。普通环境／rollout 使用 EO 指令，框架运行使用自身配置的 `EXECUTOR_PROMPT`。显式指定 UTF-8 文件路径时，仍按既有路径规则替换执行指令，文件应自行写明所需输出规则，框架不改写其正文。Terminal-Bench 复用同一加载入口。环境适配器不持有计划注入策略，也不选择或调用模型。[ALFWorld 战略采样 Recipe](../recipe/strategy-sampling/README.md#运行)
 
 Executor 不维护手写动作目录。ALFWorld 的候选缓存方式参考 verl-agent 的 admissible commands 接口，每次原生 reset/step 后更新。候选只加入 Executor 消息，Planner 使用原始公开观察与已经执行的动作，不额外接收这份候选目录。
 
@@ -62,7 +69,7 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 | `models/` | `BaseModel` 定义调用和计量接口。`AsyncChatClient` 支持限并发的 OpenAI 兼容请求，`MeteredChatModel` 复用该客户端并计量用量。`ContextWindow` 按输入预算维护完整交互单元的窗口。模型类接收调用方解析后的配置，不绑定 Planner 或 Executor；角色标签由执行层记录。 |
 | `tasks/` | 按任务 ID、划分和分片选择任务，校验计划与任务的对应关系。ALFWorld 支持生成 `task_id → gamefile` 映射，SciWorld 按子任务与 variation 加载。 |
 | `envs/` | `BaseEnv` 管理环境状态、动作轨迹和步数。ALFWorld、SciWorld 和 WebShop 适配器处理初态、动作反馈和 benchmark 的终局判定。 |
-| `prompts/` | 按环境组织 Planner 和 Executor 模板，集中管理框架提示、渲染、计划注入和输出解析。 |
+| `prompts/` | 按六种运行配置、再按 benchmark 组织提示词，提供加载、渲染、计划注入和输出解析。 |
 | `planning/` | `generate_plans()` 使用统一模板批量生成计划，记录用量并支持校验与续跑。 |
 | `frameworks/` | EO、PE-S、PE-D 和 PC 的控制策略，管理规划介入、阶段委派、公开反馈、预算与停止条件。 |
 | `rollout/` | 共享执行会话与运行循环，组合批量采样、记录输出和已有轨迹读取。 |
@@ -81,17 +88,32 @@ ALFWorld 的状态筛选候选同时提供参数实例化与可行动性辅助�
 | `pe-d-f` / `pe-d-s` | Executor | 首步前直接取计划，后续由 Executor 按需发起 `request_plan`；分别取得整体计划或子计划。 |
 | `pc-f` / `pc-s` | Planner | 初始规划后固定执行一步；环境未终止时再监测、维持或更新规划。F 持有整体规划与当前编号，S 维护当前阶段。双方不注册执行工具。 |
 
-[`FrameworkRun`](frameworks/runtime.py) 保存单次运行的状态并显式推进两阶段流程，复用 `RolloutSession`；公开常量为 `FRAMEWORK_PROTOCOL`、`FRAMEWORK_MODES` 与 `PLAN_SCOPES`。模型回调返回含 `text`、结束原因和用量的字典，仅 PE-D 的 Executor 请求带 `tools` 并可返回原生 `tool_calls`。EO 的 `planner` 可设为 `None`。运行器按适配器实际派发的环境步计 `executor_limit`，不再设置独立 Planner 调用额度或固定返回间隔。完整交互日志跨阶段保留，模型输入按下文的上下文窗口选择。Planner 读取公开动作、Executor 声明与环境反馈；候选菜单仅向 Executor 提供当前列表。事件元数据和剩余额度只在运行记录中保存。
+[`FrameworkRun`](frameworks/runtime.py) 保存单次运行的状态并显式推进两阶段流程，复用 `RolloutSession`；公开常量为 `FRAMEWORK_PROTOCOL`、`FRAMEWORK_MODES` 与 `PLAN_SCOPES`。模型回调返回含 `text`、结束原因和用量的字典，仅 PE-D 的 Executor 请求带 `tools` 并可返回原生 `tool_calls`。EO 的 `planner` 可设为 `None`。运行器按适配器实际派发的环境步计 `executor_limit`，不再设置独立 Planner 调用额度或固定返回间隔。完整交互日志跨阶段保留，模型输入按下文的上下文窗口选择。Planner 读取公开动作、Executor 回复与环境反馈；候选菜单仅向 Executor 提供当前列表。事件元数据和剩余额度只在运行记录中保存。
+
+Planner 的角色说明在各 benchmark 模块中直接使用任务类型：ALFWorld 为 `household`、SciWorld 为 `scientific`、WebShop 为 `shopping`。环境标识符不变；Terminal-Bench 现有调用保留原说明。
+
+PC 的任务说明分别保存在 [pc_f/alfworld.py](prompts/pc_f/alfworld.py) 和 [pc_s/alfworld.py](prompts/pc_s/alfworld.py) 等 benchmark 模块中，各自包含初始与监测两份文案。运行器先选择实际配置的模块，再读取本轮文案，附加该模块的 JSON 格式说明与动态 Schema。任务目标、交互历史和当前规划状态仍由外层组装。PC 文案待研究者继续审阅删减。
+
+| 规划范围 | 初始规划 | 后续监测 |
+| --- | --- | --- |
+| Full plan：`pc_f/<benchmark>.py` | `PLANNER_INITIAL_PROMPT` | `PLANNER_MONITOR_PROMPT` |
+| Sub-plan：`pc_s/<benchmark>.py` | `PLANNER_INITIAL_PROMPT` | `PLANNER_MONITOR_PROMPT` |
+
+Monitor 将反馈判断直接对应到维持、完成后推进或弃用重规划。Full 的当前阶段处理与整体计划修订分别判断，保留当前阶段时也可以调整未来目标；若证据表明当前目标不可行或已不适用，则弃用并重规划剩余目标。Sub 在该情况下直接交付新的阶段目标与完成条件。原始任务要求不因弃用中间目标而改变。
+
+弃用记录由运行器写入 `planner_decision.discarded_stages`，不要求模型重述旧目标。Planner 明确以 `blocked`／`replaced` 关闭并切换当前阶段时，Full 按旧计划中当前阶段的位置检查剩余目标，将新路线移除或改写的旧定义原样留档，排除已验证完成的阶段；Sub 留存被舍弃的旧阶段。普通措辞修订不自动记为弃用，也不将被重规划的后续目标都判为受阻。当前阶段的原文、状态、判断与证据仍由 `stage_result` 保存。该字段只用于轨迹留档，不额外注入 Planner 上下文。
+
+Planner 正文不注入初始规划或持续监测的阶段标题，直接使用本轮任务说明与输出要求。两阶段控制流由运行器推进；`planner_phase` 仅作为日志元数据记录 `initial_planning` 或 `execution_monitoring`，不进入模型输入。
 
 初始观察编号为 1，后续环境反馈依次为 2、3……；模型调用、规划求助和本地格式错误不占观察号。事件日志另存 `event_id`，观察事件持久保存 `observation_id`，`evidence_refs` 引用观察号。ALFWorld 的框架初始观察只含场景，任务目标独立提供；原始任务文本及普通 rollout 的任务输入保留。PE-S 的 Planner 模板只说明一次初始规划，PE-D 区分初始规划与后续求助。已完成阶段的模型输入只保留阶段、完成条件和证据引用，原始判断保存在日志中；`verified` 是 Planner 判断，尚未引入独立阶段 verifier。
 
-PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。只读终局复核使用以 `Assessment:` 开头的普通文本。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
+PE-D 的工具声明与本地绑定共用 [`FunctionTool`](frameworks/tools.py)，`invoke_tool(event, tools)` 检查原生调用信封及 JSON 参数后执行绑定的 handler。Planner 的初始规划与监测返回一个普通 JSON 对象：`assessment` 陈述当前观察和阶段判断，计划字段按 full/sub 配置给出；PC-F 初始化还给 `current_subplan_id`。`assessment` 是可见的结构化输出，不代表模型内部推理轨迹，也不控制 API 的推理开关。JSON 解码与字段、阶段、证据校验在执行前完成，不新增 provider 专用响应模式或 P10 扩展解析策略。
 
 PC-F 后续返回修改后的 `full_plan` 时，必须在同一 JSON 对象提供非空字符串 `revision_reason`，说明改了什么、为什么改。当前判定涵盖措辞调整和新增细节；首次规划不要求理由。只推进到已有阶段时返回 `current_subplan_id`，省略 `full_plan`。提示和字段说明明确这项条件，判定范围暂不调整。
 
 任务要求只由任务原文提供，不维护或注入独立 `constraints`／`hard_constraints` 字段；`run_framework()` 不接受该参数。
 
-PC 每个非终局轮必须调用一次 Executor，随后根据环境反馈继续或停止。Planner 只维护规划与阶段判断，不能自行宣告任务结束。开放任务由 Executor 通过环境的提交动作交付，再由独立 verifier 验收；在线记录保留待验状态。终局或额度用尽后至多一次只读收尾，不能再派发动作或改写环境裁决。`deliver_plan`、`execute_step` 与 `submit_task` 不再作为模型工具。
+PC 每个非终局轮必须调用一次 Executor，随后根据环境反馈继续或停止。Planner 只维护规划与阶段判断，不能自行宣告任务结束。环境明确终局或真实步数预算耗尽后直接记录结果，不再调用 Planner 收尾；终局按 `done`／`terminate_reason` 判断，中间奖励不触发停止。模型回复原样保存在 `model_call.response`，不提取独立的 `executor_claims`，不按自然语言关键词推断任务完成。ALFWorld 直接使用环境裁决；Terminal-Bench 按环境规定的提交动作交付工作区，由 Harbor 原生验证器判分，在线记录保留待验状态。`deliver_plan`、`execute_step` 与 `submit_task` 不再作为模型工具。
 
 环境、模型客户端、预算和日志由运行会话持有，不进入模型工具参数。当前动作模板和环境填好名称、按状态筛选的候选列表保持不变，辅助性质及评价限制仍须说明。
 
@@ -111,9 +133,9 @@ await run_framework(
 
 Planner 和 Executor 分别维护自己的窗口，权限保持不变。每次请求把保留的完整交互单元写进一个 `user` prompt，淘汰最早的完整单元，不截断单条回复或观察。已淘汰的单元不会因后续固定 prompt 变短而自动返回；Executor 明确引用的证据可临时重新提供给 Planner。PE-D 只把当前必要的原生 `assistant` 工具调用和匹配的 `tool` 结果保留为独立消息，旧工具往返写入 prompt 正文。
 
-两角色的 prompt 正文均按“基础角色说明 → 任务目标 → 完整可见交互历史 → 本轮规则与当前规划状态”组织。Executor 在历史之后、指导之前另列当步 `Available actions`，最后给求助／阶段规则及当前计划；Planner 不接收动作菜单，将本轮规划要求、JSON 字段约定和当前计划状态放在历史之后。当前原生工具配对仍作为合法的 assistant／tool 消息接在 user prompt 后。
+两角色先给对应模块的角色或执行说明与任务，再给完整可见历史。Executor 的行动／求助输出规则已合并在模块执行说明中，历史后依次给当前 `Available actions` 和当前计划或阶段；Planner 不接收动作菜单，将本轮规划要求、JSON 字段约定和当前计划状态放在历史之后。当前原生工具配对仍作为合法的 assistant／tool 消息接在 user prompt 后。
 
-任务目标、当前计划或阶段、当前观察、Executor 的当前动作菜单和当前原生工具交接不会被裁掉。窗口同时计入这些固定内容和工具声明。固定内容仍超限时，运行器在派发请求前记录 `context_window_error` 并保留缺评；PC 只读终局复核失败不改写已经取得的环境裁决。原始事件、完整请求与回复持续保存在日志，不做自动摘要。
+任务目标、当前计划或阶段、当前观察、Executor 的当前动作菜单和当前原生工具交接不会被裁掉。窗口同时计入这些固定内容和工具声明。固定内容仍超限时，运行器在派发请求前记录 `context_window_error` 并保留缺评。原始事件、完整请求与回复持续保存在日志，不做自动摘要。
 
 调用方可注入 `count_tokens(payload)`。未注入时，默认使用明确标注的 UTF-8 字节保守估计，不声称具有跨 provider 的精确 tokenizer。`model_call.context_window` 保存估算方法、估算输入量、保留／淘汰的交互与观察编号、受保护的交互编号，以及响应中实际报告的输入和输出 token。实际 `prompt_tokens` 只反馈请求中未计入的额外开销，不累加历次请求的 `total_tokens` 作为窗口占用。淘汰范围与完整原始轨迹可以分别核查。
 

@@ -7,9 +7,7 @@ from unittest.mock import Mock
 from toolkit.envs.alfworld_env import AlfWorldEnv, alfworld_settings
 from toolkit.envs.sciworld_env import SciWorldEnv, sciworld_settings
 from toolkit.envs.webshop_env import WebShopEnv, webshop_settings
-from toolkit.prompts import (
-    ALFWORLD_EXECUTOR_TEMPLATE, SCIWORLD_EXECUTOR_TEMPLATE, WEBSHOP_EXECUTOR_TEMPLATE, render_action_feedback,
-)
+from toolkit.prompts import load_executor_instruction, render_action_feedback
 from toolkit.tasks.alfworld import AlfWorldTask
 from toolkit.tasks.sciworld import SciWorldTask
 from toolkit.tasks.webshop import WebShopTask
@@ -44,8 +42,7 @@ class ExecutorTemplateTest(unittest.TestCase):
                  "Find a bag\n\nObservation: Store", ["search[keywords]"]),
             )
             feedback_text = "Observation: Invalid format. Supply one nonempty 'Action: ...' line."
-            defaults = {"alfworld": ALFWORLD_EXECUTOR_TEMPLATE, "sciworld": SCIWORLD_EXECUTOR_TEMPLATE,
-                        "webshop": WEBSHOP_EXECUTOR_TEMPLATE}
+            defaults = {name: load_executor_instruction(name) for name in ("alfworld", "sciworld", "webshop")}
             for benchmark, settings, make_env, initial, actions in adapters:
                 custom_config = resolve_config({"environments": {benchmark: {"instruction_path": str(custom_path)}}})
                 for path, instruction, options in (
@@ -55,6 +52,7 @@ class ExecutorTemplateTest(unittest.TestCase):
                     with self.subTest(benchmark=benchmark, path=path):
                         self.assertEqual(options["instruction_path"], None if path is None else str(path.resolve()))
                         env = make_env(**options)
+                        self.assertEqual(env.instruction_path, options["instruction_path"])
                         prompt, state = env.reset()
                         expected_prompt = f"{instruction}\n\n{render_action_feedback(initial, actions)}"
                         self.assertEqual(prompt, expected_prompt)

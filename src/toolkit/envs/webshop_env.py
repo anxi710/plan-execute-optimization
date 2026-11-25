@@ -52,6 +52,7 @@ class WebShopEnv(BaseEnv):
 
     def __init__(self, task, env, *, instruction_path, max_steps):
         self.task = task
+        self.instruction_path = instruction_path
         self.env = env
         super().__init__(
             observation=task.observation,

@@ -1,11 +1,15 @@
 import json
 import re
 import unittest
-from unittest.mock import AsyncMock
+from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
 
 from toolkit.envs.base import ActionResult
 from toolkit.frameworks import FRAMEWORK_MODES, FRAMEWORK_PROTOCOL, PLAN_SCOPES, run_framework
-from toolkit.prompts.frameworks import CONTINUOUS_EXECUTION_MONITORING, INITIAL_SUB_PLAN_GENERATION
+from toolkit.models.context import ContextWindow
+from toolkit.prompts import load_framework_prompts
 
 from test_frameworks import Household, events, reply
 
@@ -53,7 +57,7 @@ class MenuHousehold(Household):
 
 class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def trial(self, mode, planner_replies, executor_replies, *, limit=8, external=False, environment=None,
-                    goal="Put the object on the shelf.", context_window=None):
+                    goal="Put the object on the shelf.", context_window=None, benchmark="alfworld"):
         env = environment or Household()
         answers = iter(planner_replies)
 
@@ -71,6 +75,7 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
             workspace_id="private-workspace", executor_limit=limit,
             external_verifier=external, save=lambda value: snapshots.append(json.loads(json.dumps(value))),
             protocol_version=FRAMEWORK_PROTOCOL, context_window=context_window,
+            benchmark=benchmark,
         )
         self.assertEqual(record, snapshots[-1])
         self.assertEqual(env.resets, 1)
@@ -97,11 +102,11 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_six_variants_start_with_planning_and_use_their_own_execution_loop(self):
         taken = [reply(f"Action: {action}") for action in ACTIONS]
         update = tool("request_plan", reason="I found the object.")
+        update["text"] = "Thought: The new observation requires updated guidance."
         route = full_plan(FIND, PLACE)
         revised = {**PLACE, "stage_objective": "Put the identified object on the shelf."}
         initial_full = plan("The task mentions an object and a shelf.", full_plan=route)
         initial_sub = plan("The location needs confirmation.", **FIND)
-        finish = reply("Assessment: The environment ended; the score has not been supplied.")
         cases = {
             "eo": ([], taken, "eee"),
             "pe-s": ([initial_full], taken, "peee"),
@@ -111,12 +116,12 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                          stage_objective="Obtain and place the identified object.",
                                          completion_condition="The object is on the shelf.")],
                        [taken[0], update, *taken[1:]], "peepee"),
-            "pc-s": ([initial_sub, plan("Continue collecting the object."), verified_placement, finish],
-                     taken, "pepepep"),
+            "pc-s": ([initial_sub, plan("Continue collecting the object."), verified_placement],
+                     taken, "pepepe"),
             "pc-f": ([plan("The first phase is collection.", full_plan=route, current_subplan_id=1),
                       plan("Specify the identified object.", full_plan=full_plan(FIND, revised),
                            revision_reason="Specify the identified object."),
-                      lambda messages: verified_placement(messages, full=True), finish], taken, "pepepep"),
+                      lambda messages: verified_placement(messages, full=True)], taken, "pepepe"),
         }
         self.assertEqual(tuple(cases), FRAMEWORK_MODES)
         for mode, (planner_replies, executor_replies, order) in cases.items():
@@ -130,6 +135,7 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(record["outcome"], {"reason": "task_finish", "success": True, "reward": 1.0})
                 self.assertEqual(events(record, "stop")[0]["real_environment_steps"], 3)
                 calls = events(record, "model_call")
+                prompts = load_framework_prompts(mode, "alfworld")
                 self.assertEqual("".join(event["role"][0] for event in calls), order)
                 steps = 0
                 for event in record["events"]:
@@ -137,6 +143,7 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         content = event["messages"][0]["content"]
                         goal_position = content.index("Task goal:")
                         if event["role"] == "executor":
+                            self.assertTrue(content.startswith(prompts.EXECUTOR_PROMPT + "\n\nTask goal:"))
                             history_position = content.index("Interaction history:")
                             menu_position = content.index("Available actions:")
                             self.assertLess(goal_position, history_position)
@@ -147,16 +154,15 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                             else "Current advisory plan:")
                                 self.assertLess(menu_position, content.index(guidance))
                             if mode.startswith("pe-d"):
-                                request_position = content.index("Choose one environment action, or call request_plan")
-                                self.assertLess(menu_position, request_position)
-                                self.assertLess(request_position, content.index(guidance))
+                                self.assertEqual(content.count("Choose exactly one branch per turn:"), 1)
+                                self.assertNotIn("Write exactly one nonempty Action: <command> line per turn.", content)
                         else:
                             self.assertNotIn("Available actions:", content)
                             history_position = content.index("Public interaction history:")
                             self.assertLess(goal_position, history_position)
-                            phase = (INITIAL_SUB_PLAN_GENERATION if INITIAL_SUB_PLAN_GENERATION in content
-                                     else CONTINUOUS_EXECUTION_MONITORING)
-                            self.assertLess(history_position, content.index(phase))
+                            self.assertLess(history_position, content.index("Return exactly one JSON object"))
+                            self.assertNotIn("Initial Sub-Plan Generation", content)
+                            self.assertNotIn("Continuous Execution Monitoring", content)
                             if "Current full-plan:" in content:
                                 self.assertLess(history_position, content.index("Current full-plan:"))
                             if "Active sub-plan" in content:
@@ -170,17 +176,27 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual([item["function"]["name"] for item in call.kwargs.get("tools", [])],
                                      ["request_plan"] if mode.startswith("pe-d") else [])
                     self.assertNotIn("tool_choice", call.kwargs)
+                    if mode.startswith("pe-d"):
+                        self.assertEqual(call.kwargs["tools"][0]["function"]["description"],
+                                         prompts.PLAN_REQUEST_DESCRIPTION)
                 if mode.startswith("pc"):
                     decisions = events(record, "planner_decision")
                     self.assertEqual([item["planner_phase"] for item in decisions],
-                                     [INITIAL_SUB_PLAN_GENERATION, *[CONTINUOUS_EXECUTION_MONITORING] * 3])
-                    self.assertEqual([item["stage_changed"] for item in decisions[:-1]], [True, False, True])
-                    self.assertTrue(decisions[-1]["read_only"])
+                                     ["initial_planning", "execution_monitoring", "execution_monitoring"])
+                    self.assertEqual([item["stage_changed"] for item in decisions], [True, False, True])
+                    self.assertTrue(all(item["discarded_stages"] == [] for item in decisions))
+                    self.assertFalse(events(record, "planner_decision", read_only=True))
                     self.assertEqual(decisions[-1]["verified_stages"][0]["stage"]["stage_objective"],
                                      FIND["stage_objective"])
                     self.assertFalse(events(record, "model_tool_result"))
                     self.assertTrue(all(item["role"] != "tool" for call in calls for item in call["messages"]))
                     planner_calls = [event for event in calls if event["role"] == "planner"]
+                    initial_prompt, monitor_prompt = prompts.PLANNER_INITIAL_PROMPT, prompts.PLANNER_MONITOR_PROMPT
+                    self.assertIn(initial_prompt, messages_text(planner_calls[0]["messages"]))
+                    self.assertNotIn(monitor_prompt, messages_text(planner_calls[0]["messages"]))
+                    for monitor in planner_calls[1:]:
+                        self.assertIn(monitor_prompt, messages_text(monitor["messages"]))
+                        self.assertNotIn(initial_prompt, messages_text(monitor["messages"]))
                     for earlier, later in zip(planner_calls, planner_calls[1:]):
                         between = [event for event in events(record, "tool_event")
                                    if earlier["event_id"] < event["event_id"] < later["event_id"]]
@@ -197,6 +213,70 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(request[index + 1]["role"], "tool")
                     self.assertEqual(request[index + 1]["tool_call_id"], request[index]["tool_calls"][0]["id"])
                     self.assertEqual(len(events(record, "tool_event")), 3)
+
+    async def test_runtime_uses_selected_framework_and_benchmark_prompts(self):
+        for benchmark in ("alfworld", "sciworld", "webshop", "terminalbench"):
+            for mode in FRAMEWORK_MODES:
+                with self.subTest(mode=mode, benchmark=benchmark):
+                    initial = (plan("Collect and place it.", full_plan=full_plan(FIND, PLACE), current_subplan_id=1)
+                               if PLAN_SCOPES[mode] == "full" else plan("Collect the object.", **FIND))
+                    record, _, planner, executor = await self.trial(
+                        mode, [] if mode == "eo" else [initial], [reply("Action: finish")], benchmark=benchmark,
+                    )
+                    prompts = load_framework_prompts(mode, benchmark)
+                    content = executor.await_args.args[0][0]["content"]
+                    self.assertTrue(content.startswith(prompts.EXECUTOR_PROMPT + "\n\nTask goal:"))
+                    self.assertNotIn("Think as needed. Choose one Action.", content)
+                    self.assertEqual(record["outcome"]["reason"], "task_finish")
+                    if mode == "eo":
+                        planner.assert_not_awaited()
+                    else:
+                        content = planner.await_args.args[0][0]["content"]
+                        self.assertTrue(content.startswith(prompts.PLANNER_PROMPT + "\n\nTask goal:"))
+                        self.assertIn(prompts.PLANNER_INITIAL_PROMPT, content)
+
+    async def test_explicit_instruction_file_takes_precedence_in_runtime(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "executor.txt"
+            instruction = "Custom executor instructions with {literal parameters}.\n"
+            path.write_text(instruction, encoding="utf-8")
+            for mode in ("eo", "pe-s", "pe-d-f", "pe-d-s", "pc-f", "pc-s"):
+                with self.subTest(mode=mode):
+                    env = Household()
+                    env.instruction_path = path
+                    initial = (plan("Collect and place it.", full_plan=full_plan(FIND, PLACE), current_subplan_id=1)
+                               if PLAN_SCOPES[mode] == "full" else plan("Collect the object.", **FIND))
+                    _, _, _, executor = await self.trial(
+                        mode, [] if mode == "eo" else [initial], [reply("Action: finish")], environment=env,
+                    )
+                    self.assertTrue(executor.await_args.args[0][0]["content"].startswith(instruction + "\n\nTask goal:"))
+
+    async def test_replanning_tool_schema_matches_context_budget_and_actual_request(self):
+        prepare = ContextWindow.prepare
+        for mode in ("pe-d-f", "pe-d-s"):
+            with self.subTest(mode=mode):
+                options = []
+
+                def capture(window, records, render, **kwargs):
+                    if kwargs.get("model_options"):
+                        options.append(deepcopy(kwargs["model_options"]))
+                    return prepare(window, records, render, **kwargs)
+
+                initial = (plan("Collect and place it.", full_plan=full_plan(FIND, PLACE))
+                           if mode == "pe-d-f" else plan("Collect the object.", **FIND))
+                request = tool("request_plan", reason="The object is visible.", evidence_refs=[2])
+                request["text"] = "Thought: The observed object needs new planning guidance."
+                with patch.object(ContextWindow, "prepare", new=capture):
+                    record, _, _, executor = await self.trial(
+                        mode, [initial, plan("The guidance remains applicable.", keep=True)],
+                        [reply("Action: inspect box"), request, reply("Action: take object"),
+                         reply("Action: put object on shelf")],
+                    )
+                self.assertTrue(record["outcome"]["success"])
+                self.assertEqual(options, [call.kwargs for call in executor.await_args_list])
+                self.assertTrue(all(option["tools"][0]["function"]["description"] ==
+                                    load_framework_prompts(mode, "alfworld").PLAN_REQUEST_DESCRIPTION
+                                    for option in options))
 
     async def test_initial_planning_failure_never_calls_executor(self):
         truncated = plan("Start collecting.", **FIND)
@@ -245,7 +325,7 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         evidence_refs=[observation_ref(messages, "inspect box")])
 
         record, env, _, executor = await self.trial(
-            "pc-s", [plan("Collect the object.", **FIND), retain_price, verified_placement, reply("Assessment: Finished.")],
+            "pc-s", [plan("Collect the object.", **FIND), retain_price, verified_placement],
             [reply(f"Action: {action}") for action in ACTIONS], environment=PricedHousehold(),
         )
         last = messages_text(executor.await_args_list[-1].args[0])
@@ -277,7 +357,7 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         record, env, planner, executor = await self.trial(
             "pc-s", [plan("Collect the object.", **FIND), plan("Continue collecting."),
-                     verified_placement, reply("Assessment: Finished.")],
+                     verified_placement],
             [reply(executor_reply), reply("Action: take object"), reply("Action: put object on shelf")],
             environment=LongHousehold(),
         )
@@ -374,21 +454,92 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_verified_phase_prompt_keeps_completion_and_evidence_without_old_judgment(self):
         summary = "The object is held. FUTURE_UNCERTAINTY: reaching the shelf is not established."
 
+        class TransitHousehold(Household):
+            def execute_action(self, action):
+                if action == "go to shelf":
+                    self.actions.append(action)
+                    return ActionResult("You are at the shelf.", self.state.reward, True)
+                return super().execute_action(action)
+
         def verified(messages):
             return plan(summary, previous_stage_status="verified",
                         evidence_refs=[observation_ref(messages, "take object")], **PLACE)
 
         record, _, planner, _ = await self.trial(
             "pc-s", [plan("Collect the object.", **FIND), plan("Keep collecting."),
-                     verified, reply("Assessment: Finished.")],
-            [reply(f"Action: {action}") for action in ACTIONS],
+                     verified, plan("Place the object on the shelf.")],
+            [reply(f"Action: {action}") for action in [*ACTIONS[:2], "go to shelf", ACTIONS[2]]],
+            environment=TransitHousehold(),
         )
-        terminal_context = messages_text(planner.await_args_list[-1].args[0])
-        self.assertIn(FIND["stage_objective"], terminal_context)
-        self.assertIn(FIND["completion_condition"], terminal_context)
-        self.assertIn("You take the object.", terminal_context)
-        self.assertNotIn("FUTURE_UNCERTAINTY", terminal_context)
+        monitor_context = messages_text(planner.await_args_list[-1].args[0])
+        self.assertIn("Verified phases:", monitor_context)
+        self.assertIn(FIND["stage_objective"], monitor_context)
+        self.assertIn(FIND["completion_condition"], monitor_context)
+        self.assertIn("You take the object.", monitor_context)
+        self.assertNotIn("FUTURE_UNCERTAINTY", monitor_context)
         self.assertEqual(events(record, "stage_result")[0]["assessment"], summary)
+
+    async def test_blocked_goals_are_replanned_without_rewriting_discarded_goals(self):
+        old_goal = {"stage_objective": "Find the object in the sealed box.",
+                    "completion_condition": "The object from that box is held."}
+        old_future = {"stage_objective": "Deliver that specific object to the shelf.",
+                      "completion_condition": "The object from the sealed box is on the shelf."}
+        new_goal = {"stage_objective": "Find an accessible replacement object.",
+                    "completion_condition": "An accessible object is held."}
+        new_future = {"stage_objective": "Place the replacement object on the shelf.",
+                      "completion_condition": "The replacement object is on the shelf."}
+
+        class BlockedHousehold(Household):
+            def execute_action(self, action):
+                if action == "inspect box":
+                    self.actions.append(action)
+                    return ActionResult("The box is sealed and cannot be opened.", 0, True)
+                return super().execute_action(action)
+
+        for mode in ("pc-f", "pc-s"):
+            with self.subTest(mode=mode):
+                full = mode == "pc-f"
+                old_route = [{"id": 7, **old_goal}, {"id": 3, **old_future}]
+                new_route = [{"id": 11, **new_goal}, {"id": 19, **new_future}]
+                initial = {"full_plan": old_route, "current_subplan_id": 7} if full else old_goal
+                replacement = ({"full_plan": new_route, "current_subplan_id": 11,
+                                "revision_reason": "The sealed box makes the old route infeasible."}
+                               if full else new_goal)
+                advance = {"current_subplan_id": 19} if full else new_future
+                record, env, _, _ = await self.trial(
+                    mode, [plan("Find and deliver the object.", **initial),
+                           plan("The sealed box cannot be opened; use another object.",
+                                previous_stage_status="blocked", evidence_refs=[2], **replacement),
+                           plan("The replacement object is held.", previous_stage_status="verified",
+                                evidence_refs=[3], **advance)],
+                    [reply(f"Action: {action}") for action in ACTIONS], environment=BlockedHousehold(),
+                )
+                decisions = events(record, "planner_decision")
+                self.assertEqual(decisions[1]["discarded_stages"], old_route if full else [old_goal])
+                self.assertEqual(decisions[1]["stage_objective"], new_goal["stage_objective"])
+                self.assertEqual(decisions[1]["evidence_refs"], [2])
+                closure = events(record, "stage_result")[0]
+                self.assertEqual(closure["status"], "blocked")
+                self.assertEqual(closure["stage"], old_route[0] if full else old_goal)
+                self.assertEqual(decisions[-1]["discarded_stages"], [])
+                if full:
+                    self.assertEqual(decisions[0]["plan"], old_route)
+                    self.assertEqual(decisions[1]["plan"], new_route)
+                self.assertEqual(env.actions, ACTIONS)
+                self.assertTrue(record["outcome"]["success"])
+
+    async def test_completed_goals_removed_from_remaining_plan_are_not_discarded(self):
+        old_route = [{"id": 7, **FIND}, {"id": 3, **PLACE}]
+        record, *_ = await self.trial(
+            "pc-f", [plan("Collect and place it.", full_plan=old_route, current_subplan_id=7),
+                     plan("Collection is complete.", full_plan=[old_route[1]], current_subplan_id=3,
+                          previous_stage_status="verified", evidence_refs=[2],
+                          revision_reason="Keep only the remaining placement phase.")],
+            [reply("Action: take object"), reply("Action: put object on shelf")],
+        )
+        self.assertEqual(events(record, "planner_decision")[-1]["discarded_stages"], [])
+        self.assertEqual(events(record, "stage_result")[0]["stage"], old_route[0])
+        self.assertEqual(events(record, "stage_result")[0]["status"], "verified")
 
     async def test_static_planning_prompt_has_no_later_request_instructions(self):
         taken = [reply(f"Action: {action}") for action in ACTIONS]
@@ -407,12 +558,13 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Check the newly visible object.", later)
         self.assertIn("current guidance", later)
 
-    async def test_planner_completion_claim_and_empty_work_do_not_end_pc(self):
+    async def test_model_completion_claims_and_empty_work_do_not_end_pc(self):
         record, env, _, executor = await self.trial(
             "pc-s", [plan("Collect the object.", **FIND),
                      plan("I think the whole task is complete.", remaining_work=[]),
-                     plan("Keep the current phase."), reply("Assessment: The environment ended.")],
-            [reply(f"Action: {action}") for action in ACTIONS],
+                     plan("Keep the current phase.")],
+            [reply("Thought: The task is complete.\nAction: inspect box"),
+             *[reply(f"Action: {action}") for action in ACTIONS[1:]]],
         )
         self.assertEqual(env.actions, ACTIONS)
         self.assertEqual(executor.await_count, 3)
@@ -425,26 +577,26 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event["dispatched"] for event in events(record, "tool_event")], [False, False])
         self.assertTrue(events(record, "decision_error", error="consecutive_no_action_rounds"))
 
-    async def test_terminal_review_failure_keeps_final_step_and_native_verdict(self):
+    async def test_native_terminal_feedback_stops_without_another_planner_call(self):
         record, _, planner, _ = await self.trial(
-            "pc-s", [plan("Place the object.", **PLACE), TimeoutError()],
+            "pc-s", [plan("Place the object.", **PLACE)],
             [reply("Action: put object on shelf")], limit=1,
         )
-        self.assertEqual(planner.await_count, 2)
+        planner.assert_awaited_once()
         self.assertEqual(record["outcome"], {"reason": "task_finish", "success": False, "reward": 0.5})
-        self.assertTrue(events(record, "decision_error", error="TimeoutError"))
-        self.assertIn("The simulator ended the episode.", str(planner.await_args_list[-1].args[0]))
+        self.assertFalse(events(record, "decision_error"))
+        self.assertIn("The simulator ended the episode.", events(record, "tool_event")[-1]["observation"])
 
-    async def test_read_only_review_at_the_step_limit(self):
+    async def test_step_limit_stops_without_another_planner_call(self):
         record, _, planner, executor = await self.trial(
-            "pc-s", [plan("Inspect the box.", **FIND), reply("Assessment: Object seen.")],
+            "pc-s", [plan("Inspect the box.", **FIND)],
             [reply("Action: inspect box")], limit=1,
         )
-        self.assertEqual(planner.await_count, 2)
+        planner.assert_awaited_once()
         executor.assert_awaited_once()
         self.assertNotIn("tools", planner.await_args_list[-1].kwargs)
         self.assertEqual(record["outcome"]["reason"], "executor_budget")
-        self.assertTrue(events(record, "planner_decision", read_only=True))
+        self.assertFalse(events(record, "planner_decision", read_only=True))
 
     async def test_pc_submission_goes_through_executor_and_environment(self):
         class SubmissionEnvironment(Household):
@@ -454,17 +606,18 @@ class FrameworkRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                     done=True, dispatched=False)
 
         record, env, planner, executor = await self.trial(
-            "pc-s", [plan("Prepare the submission.", **PLACE), reply("Assessment: Submission accepted.")],
+            "pc-s", [plan("Prepare the submission.", **PLACE)],
             [reply("Action: finish")], external=True, environment=SubmissionEnvironment(),
         )
         self.assertEqual(env.actions, ["finish"])
+        planner.assert_awaited_once()
         executor.assert_awaited_once()
         self.assertIsNone(record["outcome"])
         self.assertEqual(events(record, "stop")[0]["reason"], "task_finish")
         self.assertEqual(events(record, "stop")[0]["real_environment_steps"], 0)
         self.assertEqual(events(record, "initial_observation")[0]["observation_id"], 1)
         self.assertEqual(events(record, "tool_event")[0]["observation_id"], 2)
-        self.assertIn("Submission accepted for independent verification.", str(planner.await_args_list[-1].args[0]))
+        self.assertIn("Submission accepted for independent verification.", events(record, "tool_event")[-1]["observation"])
 
 
 if __name__ == "__main__":

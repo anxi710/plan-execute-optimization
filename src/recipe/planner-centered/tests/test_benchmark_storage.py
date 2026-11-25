@@ -292,8 +292,7 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                            **({"full_plan": [{"id": 1, **stage}]} if mode == "pe-d-f" else stage)}
                 replies = {
                     "planner": iter([json.dumps(initial),
-                                     json.dumps({"assessment": "Continue.", **({"keep": True} if mode == "pe-d-f" else {})}),
-                                     "Judgment: The environment finished."]),
+                                     json.dumps({"assessment": "Continue.", **({"keep": True} if mode == "pe-d-f" else {})})]),
                     "executor": iter(["Action: inspect", *([request] if mode == "pe-d-f" else []), "Action: finish"]),
                 }
 
@@ -319,7 +318,7 @@ class BenchmarkStorageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(env.actions, ["inspect", "finish"])
                 self.assertTrue(record["outcome"]["success"])
                 expected = (["planner", "executor", "executor", "planner", "executor"] if mode == "pe-d-f"
-                            else ["planner", "executor", "planner", "executor", "planner"])
+                            else ["planner", "executor", "planner", "executor"])
                 self.assertEqual([role for role, _options in calls], expected)
                 self.assertTrue(all("tools" not in options and "tool_choice" not in options
                                     for role, options in calls if role == "planner" or mode == "pc-s"))

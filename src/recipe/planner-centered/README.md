@@ -23,6 +23,8 @@ PYTHONPATH=src python src/recipe/planner-centered/run.py \
 
 单任务入口固定 `dev/2`、配置的 Executor 模型、六配置、并发 1。当前开发默认每组最多 20 个真实环境步。非 EO 首先直接生成规划；只有 PE-D 的 Executor 注册 `request_plan`；PC 固定单步执行、反馈、监测。规划求助和本地拒绝不计环境步，所有模型请求计成本。
 
+提示词由框架按实际 `mode` 与 benchmark 从 `toolkit/prompts/<mode>/<benchmark>.py` 加载。六配置各有目录，Full/sub 分开；每份模块包含其实际需要的 Planner、Executor、格式和工具说明。PE-D 明确单轮行动／求助二选一，不再叠加环境通用 Action 要求与求助例外。显式 `instruction_path` 仍替换 Executor 指令，文件需自行给出该配置的输出规则。[提示词目录与接口](../../toolkit/README.md#统一提示词)
+
 ## ALFWorld 矩阵入口
 
 ```bash
@@ -82,4 +84,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m unittest discover \
   -s src/recipe/planner-centered/tests -q
 ```
 
-真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[两轮六配置单任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)均已生成，首次 PC-F 协议拒绝与修订后的第二轮成功分别保留待审核。完整矩阵按已冻结设置恢复，其他模型测试另定范围与预算。
+真实后端检查按环境变量显式启用，不发送模型请求。当前协议的[两轮开发任务实机轨迹](../../../experiments/planner-centered-v2/README.md#本轮单任务实机验收)及[六目录更新后 test/1 六配置复验](../../../experiments/planner-centered-v2/README.md#六配置独立目录更新后的复验)已生成；各轮协议缺评与原始输出分别保留待审核。完整矩阵已按冻结设置完成，其他模型测试另定范围与预算。

@@ -50,6 +50,7 @@ class SciWorldEnv(BaseEnv):
         if max_error_steps < 1:
             raise ValueError("ScienceWorld max_error_steps must be positive")
         self.task = task
+        self.instruction_path = instruction_path
         self.env = env
         self.max_error_steps = max_error_steps
         self.simplification = simplification

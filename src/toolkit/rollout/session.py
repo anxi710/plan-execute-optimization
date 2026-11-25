@@ -1,7 +1,6 @@
 """Advance a persistent execution session without choosing a framework."""
 
 import asyncio
-import re
 from copy import deepcopy
 from inspect import isawaitable
 from time import perf_counter
@@ -61,7 +60,6 @@ class RolloutSession:
             call = await self.call("executor", self.state.history if messages is None else messages)
         text = call["response"].get("text")
         text = text if isinstance(text, str) else ""
-        claims = re.split(r"^Action:[ \t]*", text, maxsplit=1, flags=re.MULTILINE)[0].strip()
         self.phase = "environment"
         started = perf_counter()
         try:
@@ -80,7 +78,7 @@ class RolloutSession:
         return self.log.emit(
             "tool_event", action=action["action"], observation=action["observation"], valid=action["valid"],
             dispatched=action.get("dispatched", action["action"] is not None), model_event_id=call["event_id"],
-            executor_claims=claims, seconds=perf_counter() - started,
+            seconds=perf_counter() - started,
             **({"available_actions": action["available_actions"]} if "available_actions" in action else {}),
         )
 
