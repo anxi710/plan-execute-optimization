@@ -111,9 +111,11 @@ describe('repository content', () => {
   it('keeps archived topics accessible without treating them as current candidates', () => {
     expect(parseQuestionGroups(research.details)).toEqual([]);
     expect(research.details.find((item) => item.id === 'current-proposal')?.markdown).toContain('PROPOSAL.md');
-    expect(research.stage).toBe('新实验实现准备，提案 v0.6 待审核');
+    expect(research.stage).toBe('未经专项训练的框架测试，提案 v0.6 待审核');
     expect(research.details.find((item) => item.id === 'decisions')?.markdown).toContain('列为通过审核');
     expect(getDocument('PROPOSAL')?.markdown).toContain('[研究者审核记录](RESEARCH.md#decisions)');
+    expect(getDocument('NEXT_PHASE_PLAN')?.markdown).toContain('### 1.3 从最初讨论保留的研究问题');
+    expect(resolveDocumentLink('NEXT_PHASE_PLAN.md', 'RESEARCH.md')).toBe('/documents/NEXT_PHASE_PLAN');
     const menu = historicalResearch.details.find((item) => item.id === 'direction-menu')!;
     const ids = [...menu.markdown.matchAll(/^\| (D\d+) \|/gm)].map((match) => match[1]);
     expect(questions.map((item) => item.id)).toEqual(ids);

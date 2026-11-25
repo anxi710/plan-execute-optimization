@@ -43,6 +43,7 @@ const sources = import.meta.glob<string>(
     '../../../RESEARCH.md',
     '../../../DISCUSSION.md',
     '../../../PROPOSAL.md',
+    '../../../NEXT_PHASE_PLAN.md',
     '../../../AGENTS.md',
     '../../../.github/pull_request_template.md',
     '../../../.github/ISSUE_TEMPLATE/research-task.yml',
